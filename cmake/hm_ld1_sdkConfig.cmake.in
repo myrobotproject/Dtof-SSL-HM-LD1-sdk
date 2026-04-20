@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/hm_ld1_sdkTargets.cmake")
+
+check_required_components(hm_ld1_sdk)
