@@ -1,24 +1,25 @@
-# Dtof-SSL-HM-LD1-sdk
+# hm_ld1_sdk
 
 
-`hm_ld1_sdk` is a lightweight C++17 SDK for HM-LD1 ToF modules. It provides one unified API over serial, UDP, and UVC transports, and converts device-specific packets into a consistent `FrameSet`.
+`hm_ld1_sdk` is a lightweight C++17 SDK for HM-LD1 ToF modules. It exposes one `Camera` API across serial, UDP, and UVC transports and normalizes transport-specific packets into a consistent `FrameSet`.
 
-## Features
+## Highlights
 
 - Single public header: `include/hm_ld1_sdk/hm_ld1_sdk.hpp`
 - Unified API for `Serial`, `Udp`, and `Uvc`
 - Automatic caching of device info and calibration
-- Automatic depth/point-cloud completion when calibration is available
+- Automatic depth or point-cloud completion when calibration is available
 - CMake install/export support with `find_package`
-- Linux support for UVC/V4L2 and UDP interface auto-configuration
+- Small diagnostic tools for depth dumps, point-cloud dumps, and orientation checks
 
 ## Repository Layout
 
 - `include/hm_ld1_sdk/`: public API
-- `src/protocol/`: protocol parsing
-- `src/transport/`: serial, UDP, and UVC transports
-- `src/internal/`: internal frame normalization and geometry helpers
-- `cmake/`: CMake package config template
+- `src/protocol/`: frame parsing and payload decoding
+- `src/transport/`: serial, UDP, and UVC transport backends
+- `src/internal/`: frame normalization, calibration handling, and geometry helpers
+- `tools/`: command-line diagnostics and capture utilities
+- `cmake/`: package config template
 
 ## Platform Support
 
@@ -28,14 +29,14 @@
 | Udp | No | Yes | Requires IPv4 UDP sockets |
 | Uvc | No | Yes | Requires V4L2 with `YUYV` capture |
 
-> `UdpConfig::autoConfig` relies on raw sockets and interface reconfiguration, which usually requires `root`, `CAP_NET_RAW`, or `CAP_NET_ADMIN`.
+> `UdpConfig::autoConfig` uses raw sockets and interface reconfiguration. It usually requires `root`, `CAP_NET_RAW`, or `CAP_NET_ADMIN`.
 
 ## Build
 
-### Build the shared library
+### Configure and build
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHM_LD1_SDK_BUILD_TOOLS=ON
 cmake --build build --config Release
 ```
 
@@ -48,14 +49,42 @@ cmake --install build --prefix /usr/local
 Installed artifacts include:
 
 - Header: `include/hm_ld1_sdk/hm_ld1_sdk.hpp`
-- Shared library: `libhm_ld1_sdk.so` / `hm_ld1_sdk.dll`
+- Shared library: `libhm_ld1_sdk.so` or `hm_ld1_sdk.dll`
 - CMake package: `hm_ld1_sdkConfig.cmake`
+- Optional tools: `hm_ld1_sdk_depth_dump`, `hm_ld1_sdk_pointcloud_probe`, `hm_ld1_sdk_pointcloud_dump`
 
-### Use from another CMake project
+### CMake options
+
+- `HM_LD1_SDK_ENABLE_WARNINGS`: enable common compiler warnings
+- `HM_LD1_SDK_BUILD_TOOLS`: build the command-line tools
+
+## Included Tools
+
+When `HM_LD1_SDK_BUILD_TOOLS=ON`, the project builds three small utilities:
+
+- `hm_ld1_sdk_depth_dump`: opens the sensor through UVC `Depth40x30` and writes the SDK depth frame to a BMP file
+- `hm_ld1_sdk_pointcloud_probe`: checks whether depth, point cloud, and calibration agree geometrically
+- `hm_ld1_sdk_pointcloud_dump`: renders direct SDK point-cloud output into two BMP snapshots for orientation checks
+
+Example commands:
+
+```bash
+./hm_ld1_sdk_depth_dump --uvc-device /dev/video0 --output depth_raw.bmp
+./hm_ld1_sdk_pointcloud_probe --uvc-device /dev/video0 --timeout-ms 5000
+./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
+  --output-raw pointcloud_raw.bmp \
+  --output-yneg pointcloud_yneg.bmp
+```
+
+These tools are intended for Linux/UVC validation and make no extra display-layer flips beyond the SDK's own normalization.
+
+## Use From Another CMake Project
 
 ```cmake
 find_package(hm_ld1_sdk CONFIG REQUIRED)
-target_link_libraries(your_app PRIVATE hm_ld1::sdk)
+
+add_executable(example main.cpp)
+target_link_libraries(example PRIVATE hm_ld1::sdk)
 ```
 
 ## Quick Start
@@ -64,62 +93,14 @@ target_link_libraries(your_app PRIVATE hm_ld1::sdk)
 #include <hm_ld1_sdk/hm_ld1_sdk.hpp>
 
 #include <iostream>
-#include <optional>
 #include <string>
 
-enum class SelectedTransport {
-    Uart,
-    Udp,
-    Uvc,
-};
-
-std::optional<SelectedTransport> ParseTransport(const std::string& name) {
-    if (name == "uart" || name == "serial") {
-        return SelectedTransport::Uart;
-    }
-    if (name == "udp") {
-        return SelectedTransport::Udp;
-    }
-    if (name == "uvc") {
-        return SelectedTransport::Uvc;
-    }
-    return std::nullopt;
-}
-
-int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "usage: " << argv[0] << " <uart|udp|uvc> [device-or-address] [udp-interface]\n";
-        return 1;
-    }
-
-    const std::optional<SelectedTransport> selected = ParseTransport(argv[1]);
-    if (!selected.has_value()) {
-        std::cerr << "unsupported transport: " << argv[1] << '\n';
-        return 1;
-    }
-
+int main() {
     hm_ld1::Camera camera;
     hm_ld1::CameraConfig config;
-
-    switch (*selected) {
-        case SelectedTransport::Uart:
-            config.transportType = hm_ld1::TransportType::Serial;
-            config.serial.port = argc > 2 ? argv[2] : "/dev/ttyUSB0";
-            config.serial.baud = 921600;
-            config.serial.crcMode = "auto";
-            break;
-        case SelectedTransport::Udp:
-            config.transportType = hm_ld1::TransportType::Udp;
-            config.udp.bindAddress = argc > 2 ? argv[2] : "0.0.0.0";
-            config.udp.port = 2368;
-            config.udp.interfaceName = argc > 3 ? argv[3] : "";
-            break;
-        case SelectedTransport::Uvc:
-            config.transportType = hm_ld1::TransportType::Uvc;
-            config.uvc.device = argc > 2 ? argv[2] : "/dev/video0";
-            config.uvc.workingProfile = hm_ld1::UvcStreamProfile::Auto;
-            break;
-    }
+    config.transportType = hm_ld1::TransportType::Uvc;
+    config.uvc.device = "/dev/video0";
+    config.uvc.workingProfile = hm_ld1::UvcStreamProfile::Mixed120x90;
 
     std::string error;
     if (!camera.Open(config, &error)) {
@@ -131,7 +112,7 @@ int main(int argc, char** argv) {
         hm_ld1::FrameSet frame;
         if (!camera.Poll(&frame, &error)) {
             std::cerr << "poll failed: " << error << '\n';
-            break;
+            return 2;
         }
         if (frame.empty()) {
             continue;
@@ -143,21 +124,12 @@ int main(int argc, char** argv) {
                   << " confidence=" << frame.confidence.values.size()
                   << '\n';
     }
-
-    camera.Close();
-    return 0;
 }
 ```
 
-Run examples:
+To switch transports, set `config.transportType` to `Serial` or `Udp` and fill `config.serial` or `config.udp`.
 
-```bash
-./example uart /dev/ttyUSB0
-./example udp 0.0.0.0 eth0
-./example uvc /dev/video0
-```
-
-## Configuration
+## Transport Configuration
 
 ### Serial
 
@@ -206,11 +178,11 @@ UVC profile meanings:
 
 - `Auto`: resolves to `Mixed120x90`
 - `Depth40x30`: depth-only stream
-- `Mixed120x90`: mixed point-cloud / depth / info stream
-- `PointCloud160x120`: point-cloud stream
+- `Mixed120x90`: mixed point-cloud, depth, and info stream
+- `PointCloud160x120`: direct point-cloud stream
 - `Raw480x360`: raw stream with histogram
 
-> Profile names describe the UVC transport format. The normalized measurement output from the SDK still uses a `40x30` depth/point-cloud grid.
+`Depth40x30` and `PointCloud160x120` may not carry calibration by themselves. When `bootstrapCalibration=true`, the SDK briefly opens a richer UVC profile first to cache calibration before the final stream starts.
 
 ## Output Model
 
@@ -219,9 +191,9 @@ UVC profile meanings:
 - `sequence`: SDK-side monotonically increasing frame id
 - `transportType`: transport used by the current frame
 - `activeUvcProfile`: active UVC profile
-- `clock`: host monotonic clock and device timestamp
-- `calibration`: camera intrinsics/distortion
-- `infoSnapshot`: cached device info snapshot
+- `clock`: host monotonic clock plus device timestamp
+- `calibration`: latest valid calibration snapshot
+- `infoSnapshot`: latest cached device info snapshot
 - `depth`: `ImageFrame<uint16_t>`
 - `pointCloud`: `PointCloudFrame`
 - `confidence`: confidence map
@@ -229,24 +201,32 @@ UVC profile meanings:
 
 ### Automatic completion
 
-- If the device provides a point cloud without a depth frame, the SDK reconstructs depth from `z`
-- If the device provides depth and valid calibration, the SDK derives a point cloud automatically
+- If the device provides point cloud without depth, the SDK reconstructs depth from `z`
+- If the device provides depth and valid calibration, the SDK derives point cloud automatically
 - `PointCloudFrame::source` tells whether the point cloud is direct device output or derived from depth
+
+### Orientation and coordinates
+
+- `depth`, `pointCloud`, `confidence`, `histogram`, and `calibration` are horizontally normalized by the SDK before they are exposed in `FrameSet`
+- `pointCloud[index]`, `depth.data[index]`, and `confidence.values[index]` refer to the same normalized pixel in the public `40x30` grid
+- Mirrored calibration terms (`cx`, `p2`) and direct point-cloud `x` values are updated so reprojection stays consistent after normalization
+- The SDK does not invert point-cloud `y`; whether a viewer uses Y-up or Y-down remains a display-layer choice
 
 ## Runtime Notes
 
-- `Open()` only commits internal state after the transport is fully opened
-- `Poll()` returning `true` with `frame.empty()` means no complete measurement was available yet, not an error
+- `Open()` only commits internal state after the selected transport opens successfully
+- `Poll()` returning `true` with `frame.empty()` means no complete measurement is ready yet, not an error
 - `LatestDeviceInfo()` and `LatestCalibration()` expose the latest cached snapshots
-- `Stats()` reports successful packets, parse failures, CRC failures, and the last error string
+- `Stats()` reports packet counts, parse failures, CRC failures, discarded bytes, and the last error string
 
 ## Troubleshooting
 
 - `UVC transport is only supported on Linux`: current platform does not provide V4L2 support
 - `UDP transport is not implemented on Windows`: UDP transport is Linux-only
-- `Unexpected UDP payload size`: the incoming datagram does not match the expected protocol size
+- `Unexpected UDP payload size`: the incoming datagram does not match the HM-LD1 UDP frame size
 - `UVC device negotiated a different stream size`: the device did not accept the requested profile dimensions
-- `Timed out while bootstrapping HM-LD1 UVC calibration`: calibration bootstrap timed out; try another `bootstrapProfile` or a longer timeout
+- `Timed out while bootstrapping HM-LD1 UVC calibration`: bootstrap did not receive calibration in time; try another `bootstrapProfile` or a longer timeout
+- `Unsupported serial crcMode ...`: the configured serial CRC mode is not one of the documented values
 
 ## License
 

@@ -64,6 +64,17 @@ void MergeCalibrationIfPresent(const std::optional<CameraCalibration>& update, s
     *cachedCalibration = update;
 }
 
+void NormalizeEventOrientation(internal::SourceEvent* event) {
+    if (event == nullptr) {
+        return;
+    }
+    if (event->calibrationUpdate.has_value()) {
+        event->calibrationUpdate =
+            internal::NormalizeHorizontalMirrorCalibration(*event->calibrationUpdate, kDepthWidth);
+    }
+    internal::NormalizeMeasurementOrientation(&event->measurement);
+}
+
 bool BootstrapCalibrationForProfile(
     const CameraConfig& baseConfig,
     UvcStreamProfile profile,
@@ -90,6 +101,8 @@ bool BootstrapCalibrationForProfile(
             source->Close();
             return false;
         }
+
+        NormalizeEventOrientation(&event);
 
         MergeInfoIfPresent(event.infoUpdate, cachedInfo);
         MergeCalibrationIfPresent(event.calibrationUpdate, cachedCalibration);
@@ -213,6 +226,7 @@ bool Camera::Poll(FrameSet* frame, std::string* error) {
         if (!impl_->packetSource->Poll(&event, error)) {
             return false;
         }
+        NormalizeEventOrientation(&event);
         if (event.type == internal::SourceEventType::None) {
             internal::ClearError(error);
             return true;

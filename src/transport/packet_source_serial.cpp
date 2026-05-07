@@ -20,6 +20,13 @@ public:
         : parser_(std::move(crcMode)) {}
 
     bool Open(const CameraConfig& config, std::string* error) override {
+        if (!IsSupportedCrcMode(config.serial.crcMode)) {
+            internal::SetError(
+                error,
+                "Unsupported serial crcMode '" + config.serial.crcMode +
+                    "'. Supported values: auto, none, crc8, crc8_itu, maxim, rohc.");
+            return false;
+        }
         return serialPort_.Open(config.serial.port, config.serial.baud, error);
     }
 

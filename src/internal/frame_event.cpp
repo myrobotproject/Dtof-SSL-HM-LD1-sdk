@@ -73,6 +73,60 @@ void MergeOptional(const std::optional<T>& update, std::optional<T>* target) {
     }
 }
 
+template <typename T>
+bool HasExpectedFrameGeometry(uint32_t width, uint32_t height, const std::vector<T>& values) {
+    return width > 0 &&
+        height > 0 &&
+        values.size() == static_cast<size_t>(width) * static_cast<size_t>(height);
+}
+
+template <typename T>
+void MirrorImageRows(uint32_t width, uint32_t height, std::vector<T>* values) {
+    if (values == nullptr || !HasExpectedFrameGeometry(width, height, *values)) {
+        return;
+    }
+
+    for (uint32_t y = 0; y < height; ++y) {
+        const size_t rowBase = static_cast<size_t>(y) * static_cast<size_t>(width);
+        for (uint32_t x = 0; x < width / 2; ++x) {
+            const size_t lhs = rowBase + static_cast<size_t>(x);
+            const size_t rhs = rowBase + static_cast<size_t>(width - 1 - x);
+            std::swap((*values)[lhs], (*values)[rhs]);
+        }
+    }
+}
+
+void MirrorHistogramPixelGroups(HistogramFrame* histogram) {
+    if (histogram == nullptr ||
+        !histogram->valid ||
+        !HasExpectedFrameGeometry(histogram->width, histogram->height, histogram->bins) ||
+        histogram->width == 0 ||
+        histogram->height == 0 ||
+        histogram->width % kDepthWidth != 0) {
+        return;
+    }
+
+    const uint32_t groupCount = kDepthWidth;
+    const uint32_t groupWidth = histogram->width / groupCount;
+    if (groupWidth == 0) {
+        return;
+    }
+
+    // Raw histograms are arranged as 40 horizontal pixel groups, each expanding to
+    // multiple bins. Mirror the groups while preserving the bin order inside a pixel.
+    for (uint32_t y = 0; y < histogram->height; ++y) {
+        const size_t rowBase = static_cast<size_t>(y) * static_cast<size_t>(histogram->width);
+        for (uint32_t group = 0; group < groupCount / 2; ++group) {
+            const uint32_t mirroredGroup = groupCount - 1 - group;
+            const size_t lhs = rowBase + static_cast<size_t>(group) * static_cast<size_t>(groupWidth);
+            const size_t rhs = rowBase + static_cast<size_t>(mirroredGroup) * static_cast<size_t>(groupWidth);
+            for (uint32_t bin = 0; bin < groupWidth; ++bin) {
+                std::swap(histogram->bins[lhs + bin], histogram->bins[rhs + bin]);
+            }
+        }
+    }
+}
+
 }  // namespace
 
 bool HasAnyDeviceInfo(const DeviceInfo& info) {
@@ -132,6 +186,74 @@ CameraCalibration CalibrationFromRaw(const std::array<float, kCalibrationParamet
     calibration.k6 = raw[11];
     calibration.valid = HasCalibrationNumbers(calibration);
     return calibration;
+}
+
+CameraCalibration NormalizeHorizontalMirrorCalibration(const CameraCalibration& calibration, uint32_t width) {
+    CameraCalibration normalized = calibration;
+    if (width == 0) {
+        return normalized;
+    }
+
+    const float mirroredCx = static_cast<float>(width - 1) - calibration.cx;
+    normalized.cx = mirroredCx;
+    normalized.p2 = -calibration.p2;
+    normalized.raw[2] = normalized.cx;
+    normalized.raw[7] = normalized.p2;
+    normalized.valid = HasCalibrationNumbers(normalized);
+    return normalized;
+}
+
+void NormalizeHorizontalMirrorDepth(ImageFrame<uint16_t>* depth) {
+    if (depth == nullptr) {
+        return;
+    }
+    MirrorImageRows(depth->width, depth->height, &depth->data);
+}
+
+void NormalizeHorizontalMirrorConfidence(ConfidenceFrame* confidence) {
+    if (confidence == nullptr || !confidence->valid) {
+        return;
+    }
+    MirrorImageRows(confidence->width, confidence->height, &confidence->values);
+}
+
+void NormalizeHorizontalMirrorHistogram(HistogramFrame* histogram) {
+    MirrorHistogramPixelGroups(histogram);
+}
+
+void NormalizeHorizontalMirrorPointCloud(PointCloudFrame* pointCloud) {
+    if (pointCloud == nullptr ||
+        !HasExpectedFrameGeometry(pointCloud->width, pointCloud->height, pointCloud->points)) {
+        return;
+    }
+
+    for (uint32_t y = 0; y < pointCloud->height; ++y) {
+        const size_t rowBase = static_cast<size_t>(y) * static_cast<size_t>(pointCloud->width);
+        for (uint32_t x = 0; x < pointCloud->width; ++x) {
+            const size_t index = rowBase + static_cast<size_t>(x);
+            pointCloud->points[index].x = -pointCloud->points[index].x;
+        }
+        for (uint32_t x = 0; x < pointCloud->width / 2; ++x) {
+            const size_t lhs = rowBase + static_cast<size_t>(x);
+            const size_t rhs = rowBase + static_cast<size_t>(pointCloud->width - 1 - x);
+            std::swap(pointCloud->points[lhs], pointCloud->points[rhs]);
+        }
+    }
+}
+
+void NormalizeMeasurementOrientation(Measurement* measurement) {
+    if (measurement == nullptr) {
+        return;
+    }
+
+    if (measurement->calibration.has_value()) {
+        measurement->calibration =
+            NormalizeHorizontalMirrorCalibration(*measurement->calibration, kDepthWidth);
+    }
+    NormalizeHorizontalMirrorDepth(&measurement->depth);
+    NormalizeHorizontalMirrorPointCloud(&measurement->pointCloud);
+    NormalizeHorizontalMirrorConfidence(&measurement->confidence);
+    NormalizeHorizontalMirrorHistogram(&measurement->histogram);
 }
 
 bool BuildPointCloudFromDepth(

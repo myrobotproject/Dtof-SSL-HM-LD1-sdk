@@ -37,6 +37,12 @@ void MergeDeviceInfo(const DeviceInfo& update, DeviceInfo* target);
 uint64_t HostMonotonicNowNs();
 
 CameraCalibration CalibrationFromRaw(const std::array<float, kCalibrationParameterCount>& raw);
+CameraCalibration NormalizeHorizontalMirrorCalibration(const CameraCalibration& calibration, uint32_t width);
+void NormalizeHorizontalMirrorDepth(ImageFrame<uint16_t>* depth);
+void NormalizeHorizontalMirrorConfidence(ConfidenceFrame* confidence);
+void NormalizeHorizontalMirrorHistogram(HistogramFrame* histogram);
+void NormalizeHorizontalMirrorPointCloud(PointCloudFrame* pointCloud);
+void NormalizeMeasurementOrientation(Measurement* measurement);
 bool BuildPointCloudFromDepth(
     const ImageFrame<uint16_t>& depth,
     const CameraCalibration& calibration,

@@ -12,6 +12,8 @@ struct ProtocolFrame {
     std::vector<uint8_t> msgData;
 };
 
+bool IsSupportedCrcMode(const std::string& name);
+
 class FrameParser {
 public:
     explicit FrameParser(std::string crcMode);

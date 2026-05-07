@@ -56,9 +56,25 @@ uint8_t ComputeCrc8(const uint8_t* data, size_t size, const Crc8Profile& profile
     return static_cast<uint8_t>(crc ^ profile.xorOut);
 }
 
+int FindCrcProfileIndex(const std::string& name) {
+    for (size_t index = 0; index < kCrcProfiles.size(); ++index) {
+        if (name == kCrcProfiles[index].name) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
 }  // namespace
 
 FrameParser::FrameParser(std::string crcMode) : crcMode_(std::move(crcMode)) {}
+
+bool IsSupportedCrcMode(const std::string& name) {
+    if (name == "auto" || name == "none") {
+        return true;
+    }
+    return FindCrcProfileIndex(name) >= 0;
+}
 
 void FrameParser::Append(const uint8_t* data, size_t size) {
     buffer_.insert(buffer_.end(), data, data + size);
@@ -173,12 +189,7 @@ bool FrameParser::ValidateCrc(const uint8_t* data, size_t size, uint8_t received
 }
 
 int FrameParser::FindProfileIndex(const std::string& name) {
-    for (size_t index = 0; index < kCrcProfiles.size(); ++index) {
-        if (name == kCrcProfiles[index].name) {
-            return static_cast<int>(index);
-        }
-    }
-    return -1;
+    return FindCrcProfileIndex(name);
 }
 
 }  // namespace hm_ld1

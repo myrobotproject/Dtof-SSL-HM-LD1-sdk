@@ -12,6 +12,7 @@ else()
 endif()
 
 option(HM_LD1_SDK_ENABLE_WARNINGS "Enable common compiler warnings for hm_ld1_sdk" ${HM_LD1_SDK_TOP_LEVEL_DEFAULT})
+option(HM_LD1_SDK_BUILD_TOOLS "Build hm_ld1_sdk command-line tools" ${HM_LD1_SDK_TOP_LEVEL_DEFAULT})
 
 add_library(hm_ld1_sdk SHARED
     src/camera.cpp
@@ -68,12 +69,54 @@ if(HM_LD1_SDK_ENABLE_WARNINGS)
     endif()
 endif()
 
+function(hm_ld1_add_tool target source_file)
+    add_executable(${target}
+        ${source_file}
+    )
+
+    target_link_libraries(${target}
+        PRIVATE
+            hm_ld1_sdk
+    )
+
+    target_include_directories(${target}
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    if(HM_LD1_SDK_ENABLE_WARNINGS)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /W4)
+        else()
+            target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endif()
+endfunction()
+
+if(HM_LD1_SDK_BUILD_TOOLS)
+    set(HM_LD1_SDK_TOOL_TARGETS
+        hm_ld1_sdk_depth_dump
+        hm_ld1_sdk_pointcloud_probe
+        hm_ld1_sdk_pointcloud_dump
+    )
+
+    hm_ld1_add_tool(hm_ld1_sdk_depth_dump tools/hm_ld1_sdk_depth_dump.cpp)
+    hm_ld1_add_tool(hm_ld1_sdk_pointcloud_probe tools/hm_ld1_sdk_pointcloud_probe.cpp)
+    hm_ld1_add_tool(hm_ld1_sdk_pointcloud_dump tools/hm_ld1_sdk_pointcloud_dump.cpp)
+endif()
+
 install(TARGETS hm_ld1_sdk
     EXPORT hm_ld1_sdkTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(HM_LD1_SDK_BUILD_TOOLS)
+    install(TARGETS ${HM_LD1_SDK_TOOL_TARGETS}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
 
 install(FILES include/hm_ld1_sdk/hm_ld1_sdk.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hm_ld1_sdk
@@ -82,7 +125,7 @@ install(FILES include/hm_ld1_sdk/hm_ld1_sdk.hpp
 install(FILES
     LICENSE
     README.md
-    README_EN.md
+    README_CN.md
     DESTINATION ${CMAKE_INSTALL_DATADIR}/hm_ld1_sdk
 )
 
