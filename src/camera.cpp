@@ -139,7 +139,12 @@ bool BootstrapUvcCalibration(
     std::string lastError;
     for (const UvcStreamProfile profile : candidates) {
         std::string attemptError;
-        if (BootstrapCalibrationForProfile(config, profile, cachedInfo, cachedCalibration, &attemptError)) {
+        if (BootstrapCalibrationForProfile(
+                config,
+                profile,
+                cachedInfo,
+                cachedCalibration,
+                &attemptError)) {
             return true;
         }
         lastError = attemptError;

@@ -18,7 +18,7 @@
 - `include/hm_ld1_sdk/`：公共 API
 - `src/protocol/`：协议解析和载荷解码
 - `src/transport/`：串口、UDP、UVC 传输后端
-- `src/internal/`：方向归一化、标定处理、几何辅助逻辑
+- `src/internal/`：帧组装、标定处理、几何辅助逻辑
 - `tools/`：命令行诊断和抓图工具
 - `cmake/`：CMake 包配置模板
 
@@ -65,7 +65,7 @@ cmake --install build --prefix /usr/local
 
 - `hm_ld1_sdk_depth_dump`：通过 UVC `Depth40x30` 抓取 SDK 深度图并写成 BMP
 - `hm_ld1_sdk_pointcloud_probe`：检查深度、点云和标定之间的几何一致性
-- `hm_ld1_sdk_pointcloud_dump`：把 SDK 输出的点云渲染成两张 BMP，便于检查方向是否正确
+- `hm_ld1_sdk_pointcloud_dump`：把设备直出点云或深度回算点云渲染成 BMP，便于直观查看
 
 示例命令：
 
@@ -73,11 +73,16 @@ cmake --install build --prefix /usr/local
 ./hm_ld1_sdk_depth_dump --uvc-device /dev/video0 --output depth_raw.bmp
 ./hm_ld1_sdk_pointcloud_probe --uvc-device /dev/video0 --timeout-ms 5000
 ./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
+  --profile pointcloud \
   --output-raw pointcloud_raw.bmp \
   --output-yneg pointcloud_yneg.bmp
+./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
+  --profile depth \
+  --output-raw pointcloud_from_depth_raw.bmp \
+  --output-yneg pointcloud_from_depth_yneg.bmp
 ```
 
-这些工具主要用于 Linux/UVC 场景验证，不会在 SDK 已做方向归一化之外再额外做显示层翻转。
+这些工具主要用于 Linux/UVC 场景验证，会把 SDK 输出写成便于检查的文件。
 
 ## 在其他 CMake 工程中使用
 
@@ -206,12 +211,12 @@ UVC profile 含义：
 - 当设备输出深度图且标定有效时，SDK 会自动生成点云
 - `PointCloudFrame::source` 可区分点云是设备直出还是由深度推导
 
-### 方向与坐标约定
+### 数据对齐与坐标约定
 
-- `depth`、`pointCloud`、`confidence`、`histogram` 和 `calibration` 会在对外暴露前由 SDK 统一做水平归一化
-- `pointCloud[index]`、`depth.data[index]`、`confidence.values[index]` 始终对应公开 `40x30` 网格中的同一个像素
-- SDK 会同步修正镜像相关标定项（`cx`、`p2`）和设备直出点云的 `x` 坐标，保证重投影关系在归一化后仍然一致
-- SDK 不会对点云 `y` 轴做取反；显示层是否使用 Y-up 或 Y-down 由上层应用决定
+- `depth`、`pointCloud`、`confidence`、`histogram` 和 `calibration` 在 `FrameSet` 中使用同一套公开帧布局
+- 当这些帧同时存在时，`pointCloud[index]`、`depth.data[index]` 和 `confidence.values[index]` 对应公开 `40x30` 网格中的同一个采样
+- `PointCloudFrame::source` 可区分点云是设备直出还是由深度推导
+- 点云坐标约定为 `x` 向右、`y` 向下、`z` 向前
 
 ## 运行时说明
 

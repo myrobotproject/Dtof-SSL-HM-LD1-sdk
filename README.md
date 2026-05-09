@@ -1,5 +1,4 @@
-# hm_ld1_sdk
-
+# Dtof-SSL-HM-LD1-sdk
 
 `hm_ld1_sdk` is a lightweight C++17 SDK for HM-LD1 ToF modules. It exposes one `Camera` API across serial, UDP, and UVC transports and normalizes transport-specific packets into a consistent `FrameSet`.
 
@@ -10,14 +9,14 @@
 - Automatic caching of device info and calibration
 - Automatic depth or point-cloud completion when calibration is available
 - CMake install/export support with `find_package`
-- Small diagnostic tools for depth dumps, point-cloud dumps, and orientation checks
+- Small diagnostic tools for depth dumps, point-cloud dumps, and geometry checks
 
 ## Repository Layout
 
 - `include/hm_ld1_sdk/`: public API
 - `src/protocol/`: frame parsing and payload decoding
 - `src/transport/`: serial, UDP, and UVC transport backends
-- `src/internal/`: frame normalization, calibration handling, and geometry helpers
+- `src/internal/`: frame assembly, calibration handling, and geometry helpers
 - `tools/`: command-line diagnostics and capture utilities
 - `cmake/`: package config template
 
@@ -64,7 +63,7 @@ When `HM_LD1_SDK_BUILD_TOOLS=ON`, the project builds three small utilities:
 
 - `hm_ld1_sdk_depth_dump`: opens the sensor through UVC `Depth40x30` and writes the SDK depth frame to a BMP file
 - `hm_ld1_sdk_pointcloud_probe`: checks whether depth, point cloud, and calibration agree geometrically
-- `hm_ld1_sdk_pointcloud_dump`: renders direct SDK point-cloud output into two BMP snapshots for orientation checks
+- `hm_ld1_sdk_pointcloud_dump`: renders direct or depth-derived SDK point-cloud output into BMP snapshots for visual inspection
 
 Example commands:
 
@@ -72,11 +71,16 @@ Example commands:
 ./hm_ld1_sdk_depth_dump --uvc-device /dev/video0 --output depth_raw.bmp
 ./hm_ld1_sdk_pointcloud_probe --uvc-device /dev/video0 --timeout-ms 5000
 ./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
+  --profile pointcloud \
   --output-raw pointcloud_raw.bmp \
   --output-yneg pointcloud_yneg.bmp
+./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
+  --profile depth \
+  --output-raw pointcloud_from_depth_raw.bmp \
+  --output-yneg pointcloud_from_depth_yneg.bmp
 ```
 
-These tools are intended for Linux/UVC validation and make no extra display-layer flips beyond the SDK's own normalization.
+These tools are intended for Linux/UVC validation and write SDK outputs in a format that is easy to inspect.
 
 ## Use From Another CMake Project
 
@@ -205,12 +209,12 @@ UVC profile meanings:
 - If the device provides depth and valid calibration, the SDK derives point cloud automatically
 - `PointCloudFrame::source` tells whether the point cloud is direct device output or derived from depth
 
-### Orientation and coordinates
+### Data alignment and coordinates
 
-- `depth`, `pointCloud`, `confidence`, `histogram`, and `calibration` are horizontally normalized by the SDK before they are exposed in `FrameSet`
-- `pointCloud[index]`, `depth.data[index]`, and `confidence.values[index]` refer to the same normalized pixel in the public `40x30` grid
-- Mirrored calibration terms (`cx`, `p2`) and direct point-cloud `x` values are updated so reprojection stays consistent after normalization
-- The SDK does not invert point-cloud `y`; whether a viewer uses Y-up or Y-down remains a display-layer choice
+- `depth`, `pointCloud`, `confidence`, `histogram`, and `calibration` use the same public frame layout when present in `FrameSet`
+- `pointCloud[index]`, `depth.data[index]`, and `confidence.values[index]` refer to the same public `40x30` grid sample when those frames are present
+- `PointCloudFrame::source` indicates whether a point cloud is direct device output or derived from depth
+- Point-cloud coordinates use `x` right, `y` down, and `z` forward
 
 ## Runtime Notes
 

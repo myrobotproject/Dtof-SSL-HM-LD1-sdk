@@ -110,7 +110,6 @@ bool ParsePointCloud160x120(const std::vector<uint8_t>& payload, UvcParsedFrame*
 
     ReadPointCloud(payload.data(), &frame->event.measurement.pointCloud);
     ReadConfidence(payload.data() + kPointCloudBytes, &frame->event.measurement.confidence);
-    internal::BuildDepthFromPointCloud(frame->event.measurement.pointCloud, &frame->event.measurement.depth);
 
     if (payload.size() >= kMinimumPayload + kObservedTailBytes) {
         size_t offset = kMinimumPayload;
@@ -158,7 +157,6 @@ bool ParseMixedPcd(const std::vector<uint8_t>& payload, UvcParsedFrame* frame, s
     const float temperature = protocol_detail::ReadLeFloat(payload.data() + 12);
     ReadPointCloud(payload.data() + 16, &frame->event.measurement.pointCloud);
     ReadConfidence(payload.data() + 16 + kPointCloudBytes, &frame->event.measurement.confidence);
-    internal::BuildDepthFromPointCloud(frame->event.measurement.pointCloud, &frame->event.measurement.depth);
 
     frame->event.infoUpdate.sensorTemperatureCelsius = temperature;
     frame->event.measurement.clock.device.valid = true;

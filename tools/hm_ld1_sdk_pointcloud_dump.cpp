@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -13,6 +14,11 @@
 
 namespace hm_ld1 {
 namespace {
+
+enum class CaptureProfile {
+    Depth,
+    PointCloud,
+};
 
 struct Rgb {
     uint8_t red = 0;
@@ -69,6 +75,32 @@ constexpr int kPointSize = 4;
 constexpr float kInitialYawDeg = 25.0f;
 constexpr float kInitialPitchDeg = -20.0f;
 constexpr float kInitialZoom = 1.0f;
+
+const char* CaptureProfileName(CaptureProfile profile) {
+    switch (profile) {
+        case CaptureProfile::Depth:
+            return "depth";
+        case CaptureProfile::PointCloud:
+            return "pointcloud";
+        default:
+            return "unknown";
+    }
+}
+
+bool ParseCaptureProfile(const std::string& value, CaptureProfile* profile) {
+    if (profile == nullptr) {
+        return false;
+    }
+    if (value == "depth") {
+        *profile = CaptureProfile::Depth;
+        return true;
+    }
+    if (value == "pointcloud") {
+        *profile = CaptureProfile::PointCloud;
+        return true;
+    }
+    return false;
+}
 
 float DegreesToRadians(float degrees) {
     return degrees * 3.14159265358979323846f / 180.0f;
@@ -312,6 +344,36 @@ bool WriteBmp(const Canvas& canvas, const std::string& path, std::string* error)
     return true;
 }
 
+bool WritePointCloudCsv(const FrameSet& frame, const std::string& path, std::string* error) {
+    std::ofstream stream(path, std::ios::binary);
+    if (!stream) {
+        if (error != nullptr) {
+            *error = "failed to open csv output file: " + path;
+        }
+        return false;
+    }
+
+    stream << std::setprecision(9);
+    stream << "index,x,y,z,valid\n";
+    for (size_t index = 0; index < frame.pointCloud.points.size(); ++index) {
+        const Point3f& point = frame.pointCloud.points[index];
+        const bool valid = std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z) && point.z > 0.0f;
+        stream << index << ','
+               << point.x << ','
+               << point.y << ','
+               << point.z << ','
+               << (valid ? 1 : 0) << '\n';
+    }
+
+    if (!stream) {
+        if (error != nullptr) {
+            *error = "failed while writing csv output file: " + path;
+        }
+        return false;
+    }
+    return true;
+}
+
 ImageFrame<uint16_t> BuildDepthForColoring(const FrameSet& frame) {
     if (!frame.depth.empty() &&
         frame.depth.data.size() == frame.pointCloud.points.size() &&
@@ -426,19 +488,30 @@ Canvas RenderPointCloud(const FrameSet& frame, bool negateY) {
 void PrintUsage(const char* argv0) {
     std::cerr
         << "Usage: " << argv0
-        << " [--uvc-device /dev/video0] [--timeout-ms 5000] [--output-raw pointcloud_raw.bmp] [--output-yneg pointcloud_yneg.bmp]\n";
+        << " [--profile depth|pointcloud] [--uvc-device /dev/video0] [--timeout-ms 5000] [--output-raw pointcloud_raw.bmp] [--output-yneg pointcloud_yneg.bmp] [--csv-output pointcloud.csv]\n"
+        << "Use --profile depth to render the point cloud derived from UVC depth frames.\n";
 }
 
 }  // namespace
 
 int Main(int argc, char** argv) {
+    CaptureProfile profile = CaptureProfile::PointCloud;
     std::string device = "/dev/video0";
     std::string outputRaw = "pointcloud_raw.bmp";
     std::string outputYNeg = "pointcloud_yneg.bmp";
+    std::string csvOutput;
     int timeoutMs = 5000;
 
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
+        if (argument == "--profile" && index + 1 < argc) {
+            if (!ParseCaptureProfile(argv[++index], &profile)) {
+                std::cerr << "Unsupported profile: " << argv[index] << "\n";
+                PrintUsage(argv[0]);
+                return 1;
+            }
+            continue;
+        }
         if (argument == "--uvc-device" && index + 1 < argc) {
             device = argv[++index];
             continue;
@@ -449,6 +522,10 @@ int Main(int argc, char** argv) {
         }
         if (argument == "--output-yneg" && index + 1 < argc) {
             outputYNeg = argv[++index];
+            continue;
+        }
+        if (argument == "--csv-output" && index + 1 < argc) {
+            csvOutput = argv[++index];
             continue;
         }
         if (argument == "--timeout-ms" && index + 1 < argc) {
@@ -469,8 +546,9 @@ int Main(int argc, char** argv) {
     CameraConfig config;
     config.transportType = TransportType::Uvc;
     config.uvc.device = device;
-    config.uvc.workingProfile = UvcStreamProfile::PointCloud160x120;
-    config.uvc.bootstrapCalibration = false;
+    config.uvc.workingProfile =
+        profile == CaptureProfile::Depth ? UvcStreamProfile::Depth40x30 : UvcStreamProfile::PointCloud160x120;
+    config.uvc.bootstrapCalibration = profile == CaptureProfile::Depth;
 
     std::string error;
     if (!camera.Open(config, &error)) {
@@ -509,11 +587,17 @@ int Main(int argc, char** argv) {
         std::cerr << error << "\n";
         return 6;
     }
+    if (!csvOutput.empty() && !WritePointCloudCsv(frame, csvOutput, &error)) {
+        std::cerr << error << "\n";
+        return 7;
+    }
 
     std::cout << "saved_raw=" << outputRaw
               << " saved_yneg=" << outputYNeg
+              << " profile=" << CaptureProfileName(profile)
               << " points=" << frame.pointCloud.points.size()
               << " source=" << (frame.pointCloud.source == PointCloudSource::Direct ? "direct" : "derived")
+              << (csvOutput.empty() ? "" : " csv=" + csvOutput)
               << "\n";
     return 0;
 }
