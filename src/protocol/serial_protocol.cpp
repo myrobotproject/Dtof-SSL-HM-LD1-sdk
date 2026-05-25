@@ -39,7 +39,7 @@ bool ParseSerialDataFrame(const std::vector<uint8_t>& payload, internal::Measure
 
     size_t offset = 0;
     const uint8_t protocolVersion = payload[offset++];
-    const uint32_t timestampUs = protocol_detail::ReadLe32(payload.data() + offset);
+    const uint32_t rawTimestamp = protocol_detail::ReadLe32(payload.data() + offset);
     offset += 4;
 
     std::array<float, kCalibrationParameterCount> parameters {};
@@ -58,9 +58,9 @@ bool ParseSerialDataFrame(const std::vector<uint8_t>& payload, internal::Measure
     }
 
     measurement->clock.device.valid = true;
-    measurement->clock.device.value = timestampUs;
-    measurement->clock.device.unit = TimestampUnit::Microseconds;
-    measurement->clock.device.raw0 = timestampUs;
+    measurement->clock.device.value = rawTimestamp;
+    measurement->clock.device.unit = TimestampUnit::Milliseconds;
+    measurement->clock.device.raw0 = rawTimestamp;
     measurement->clock.device.raw1 = 0;
 
     (void)protocolVersion;

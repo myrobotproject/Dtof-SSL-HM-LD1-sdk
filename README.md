@@ -1,4 +1,5 @@
-# Dtof-SSL-HM-LD1-sdk
+# hm_ld1_sdk
+
 
 `hm_ld1_sdk` is a lightweight C++17 SDK for HM-LD1 ToF modules. It exposes one `Camera` API across serial, UDP, and UVC transports and normalizes transport-specific packets into a consistent `FrameSet`.
 
@@ -9,7 +10,7 @@
 - Automatic caching of device info and calibration
 - Automatic depth or point-cloud completion when calibration is available
 - CMake install/export support with `find_package`
-- Small diagnostic tools for depth dumps, point-cloud dumps, and geometry checks
+- Small diagnostic tools for depth dumps, point-cloud dumps, timestamp checks, and geometry checks
 
 ## Repository Layout
 
@@ -50,7 +51,7 @@ Installed artifacts include:
 - Header: `include/hm_ld1_sdk/hm_ld1_sdk.hpp`
 - Shared library: `libhm_ld1_sdk.so` or `hm_ld1_sdk.dll`
 - CMake package: `hm_ld1_sdkConfig.cmake`
-- Optional tools: `hm_ld1_sdk_depth_dump`, `hm_ld1_sdk_pointcloud_probe`, `hm_ld1_sdk_pointcloud_dump`
+- Optional tools: `hm_ld1_sdk_depth_dump`, `hm_ld1_sdk_timestamp_probe`, `hm_ld1_sdk_pointcloud_probe`, `hm_ld1_sdk_pointcloud_dump`
 
 ### CMake options
 
@@ -59,9 +60,10 @@ Installed artifacts include:
 
 ## Included Tools
 
-When `HM_LD1_SDK_BUILD_TOOLS=ON`, the project builds three small utilities:
+When `HM_LD1_SDK_BUILD_TOOLS=ON`, the project builds four small utilities:
 
 - `hm_ld1_sdk_depth_dump`: opens the sensor through UVC `Depth40x30` and writes the SDK depth frame to a BMP file
+- `hm_ld1_sdk_timestamp_probe`: prints serial SDK timestamp fields for PPS and device-counter checks
 - `hm_ld1_sdk_pointcloud_probe`: checks whether depth, point cloud, and calibration agree geometrically
 - `hm_ld1_sdk_pointcloud_dump`: renders direct or depth-derived SDK point-cloud output into BMP snapshots for visual inspection
 
@@ -69,6 +71,7 @@ Example commands:
 
 ```bash
 ./hm_ld1_sdk_depth_dump --uvc-device /dev/video0 --output depth_raw.bmp
+./hm_ld1_sdk_timestamp_probe --serial-port /dev/ttyUSB0 --count 50
 ./hm_ld1_sdk_pointcloud_probe --uvc-device /dev/video0 --timeout-ms 5000
 ./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
   --profile pointcloud \
@@ -80,7 +83,7 @@ Example commands:
   --output-yneg pointcloud_from_depth_yneg.bmp
 ```
 
-These tools are intended for Linux/UVC validation and write SDK outputs in a format that is easy to inspect.
+The UVC tools write SDK outputs in a format that is easy to inspect. The timestamp probe is intended for serial validation.
 
 ## Use From Another CMake Project
 
@@ -202,6 +205,14 @@ UVC profile meanings:
 - `pointCloud`: `PointCloudFrame`
 - `confidence`: confidence map
 - `histogram`: only present for raw UVC streams
+
+### Device timestamps
+
+- Serial timestamps are exposed in `clock.device.value` as microseconds.
+- When a valid PPS signal is detected on serial, `clock.device.value` is converted to a host-system-time based timestamp.
+- Without a valid PPS signal, serial uses the device's increasing timestamp converted from milliseconds to microseconds.
+- `clock.device.raw0` keeps the raw serial `TimeStamp` field for diagnostics.
+- UDP and UVC timestamp units follow the corresponding transport packet definitions.
 
 ### Automatic completion
 

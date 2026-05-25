@@ -96,11 +96,13 @@ endfunction()
 if(HM_LD1_SDK_BUILD_TOOLS)
     set(HM_LD1_SDK_TOOL_TARGETS
         hm_ld1_sdk_depth_dump
+        hm_ld1_sdk_timestamp_probe
         hm_ld1_sdk_pointcloud_probe
         hm_ld1_sdk_pointcloud_dump
     )
 
     hm_ld1_add_tool(hm_ld1_sdk_depth_dump tools/hm_ld1_sdk_depth_dump.cpp)
+    hm_ld1_add_tool(hm_ld1_sdk_timestamp_probe tools/hm_ld1_sdk_timestamp_probe.cpp)
     hm_ld1_add_tool(hm_ld1_sdk_pointcloud_probe tools/hm_ld1_sdk_pointcloud_probe.cpp)
     hm_ld1_add_tool(hm_ld1_sdk_pointcloud_dump tools/hm_ld1_sdk_pointcloud_dump.cpp)
 endif()
