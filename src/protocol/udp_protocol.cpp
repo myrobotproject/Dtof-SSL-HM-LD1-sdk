@@ -1,6 +1,7 @@
 #include "protocol/udp_protocol.hpp"
 
 #include "internal/error_utils.hpp"
+#include "internal/timestamp_normalizer.hpp"
 #include "protocol/byte_utils.hpp"
 
 namespace hm_ld1 {
@@ -40,6 +41,10 @@ bool ParseUdpDataFrame(const uint8_t* payload, size_t payloadSize, internal::Mea
     offset += 4;
     const uint32_t timestampNanoseconds = protocol_detail::ReadLe32(payload + offset);
     offset += 4;
+    if (timestampNanoseconds >= 1000000000u) {
+        internal::SetError(error, "UDP timestamp nanoseconds must be less than 1,000,000,000");
+        return false;
+    }
     const uint16_t width = protocol_detail::ReadLe16(payload + offset);
     offset += 2;
     const uint16_t height = protocol_detail::ReadLe16(payload + offset);
@@ -90,8 +95,8 @@ bool ParseUdpDataFrame(const uint8_t* payload, size_t payloadSize, internal::Mea
     }
 
     measurement->clock.device.valid = true;
-    measurement->clock.device.value =
-        static_cast<uint64_t>(timestampSeconds) * 1000000ull + static_cast<uint64_t>(timestampNanoseconds) / 1000ull;
+    const auto epochTimestamp = internal::EpochSecondsNanosecondsToUs(timestampSeconds, timestampNanoseconds);
+    measurement->clock.device.value = epochTimestamp.value_or(0);
     measurement->clock.device.unit = TimestampUnit::Microseconds;
     measurement->clock.device.raw0 = timestampSeconds;
     measurement->clock.device.raw1 = timestampNanoseconds;

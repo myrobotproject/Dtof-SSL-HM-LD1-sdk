@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "internal/error_utils.hpp"
+#include "internal/timestamp_normalizer.hpp"
 #include "internal/uvc_profile_utils.hpp"
 #include "protocol/uvc_protocol.hpp"
 #include "transport/uvc_device.hpp"
@@ -24,6 +25,8 @@ public:
     bool Open(const CameraConfig& config, std::string* error) override {
         internal::ClearError(error);
         config_ = config;
+        timestampNormalizer_.Reset(internal::SystemTimeNowUs());
+        lastTimestampUs_ = 0;
         resolvedProfile_ = internal::ResolveUvcProfile(config_.uvc.workingProfile);
         if (!internal::GetUvcStreamDimensions(resolvedProfile_, &streamWidth_, &streamHeight_)) {
             internal::SetError(error, "Unsupported UVC stream profile");
@@ -36,8 +39,7 @@ public:
         *event = internal::SourceEvent();
         internal::ClearError(error);
         if (!readyEvents_.empty()) {
-            *event = std::move(readyEvents_.front());
-            readyEvents_.pop_front();
+            PopReadyEvent(event);
             return true;
         }
 
@@ -65,6 +67,8 @@ public:
         readyEvents_.clear();
         pendingPointCloud_.reset();
         device_.Close();
+        timestampNormalizer_.Reset();
+        lastTimestampUs_ = 0;
     }
 
     CameraStats Stats() const override {
@@ -86,6 +90,9 @@ public:
 private:
     bool HandleParsedFrame(UvcParsedFrame parsedFrame, internal::SourceEvent* event) {
         if (resolvedProfile_ != UvcStreamProfile::Mixed120x90 || parsedFrame.type == UvcParsedFrameType::Info) {
+            if (parsedFrame.type == UvcParsedFrameType::Depth || parsedFrame.type == UvcParsedFrameType::PointCloud) {
+                NormalizeTimestamp(&parsedFrame.event.measurement);
+            }
             *event = std::move(parsedFrame.event);
             return true;
         }
@@ -97,8 +104,7 @@ private:
             }
             pendingPointCloud_ = std::move(parsedFrame.event);
             if (!readyEvents_.empty()) {
-                *event = std::move(readyEvents_.front());
-                readyEvents_.pop_front();
+                PopReadyEvent(event);
             }
             return true;
         }
@@ -117,12 +123,46 @@ private:
             combined.measurement.confidence = std::move(parsedFrame.event.measurement.confidence);
             combined.measurement.histogram = std::move(parsedFrame.event.measurement.histogram);
             combined.measurement.activeUvcProfile = UvcStreamProfile::Mixed120x90;
+            NormalizeTimestamp(&combined.measurement);
             *event = std::move(combined);
             return true;
         }
 
+        if (parsedFrame.type == UvcParsedFrameType::Depth || parsedFrame.type == UvcParsedFrameType::PointCloud) {
+            NormalizeTimestamp(&parsedFrame.event.measurement);
+        }
         *event = std::move(parsedFrame.event);
         return true;
+    }
+
+    void PopReadyEvent(internal::SourceEvent* event) {
+        NormalizeTimestamp(&readyEvents_.front().measurement);
+        *event = std::move(readyEvents_.front());
+        readyEvents_.pop_front();
+    }
+
+    void NormalizeTimestamp(internal::Measurement* measurement) {
+        if (measurement == nullptr) {
+            return;
+        }
+
+        uint64_t valueUs = internal::SystemTimeNowUs();
+        if (measurement->clock.device.valid) {
+            const uint32_t rawTimestampMs = measurement->clock.device.raw0;
+            valueUs = timestampNormalizer_.Normalize(rawTimestampMs, internal::SystemTimeNowUs());
+            measurement->clock.device.unit = TimestampUnit::Microseconds;
+        } else {
+            measurement->clock.device.valid = true;
+            measurement->clock.device.raw0 = 0;
+            measurement->clock.device.raw1 = 0;
+        }
+
+        if (lastTimestampUs_ != 0 && valueUs <= lastTimestampUs_) {
+            valueUs = lastTimestampUs_ + 1ull;
+        }
+        lastTimestampUs_ = valueUs;
+        measurement->clock.device.value = valueUs;
+        measurement->clock.device.unit = TimestampUnit::Microseconds;
     }
 
     CameraConfig config_;
@@ -136,6 +176,8 @@ private:
     size_t okPacketCount_ = 0;
     size_t parseFailureCount_ = 0;
     std::string lastError_;
+    internal::RelativeMillisecondNormalizer timestampNormalizer_;
+    uint64_t lastTimestampUs_ = 0;
 };
 
 }  // namespace

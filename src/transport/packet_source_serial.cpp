@@ -1,38 +1,19 @@
 #include "transport/packet_source_factory.hpp"
 
-#include <algorithm>
 #include <array>
-#include <chrono>
-#include <cstdint>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
 
 #include "internal/error_utils.hpp"
+#include "internal/timestamp_normalizer.hpp"
 #include "protocol/frame_parser.hpp"
 #include "protocol/serial_protocol.hpp"
 #include "transport/serial_port.hpp"
 
 namespace hm_ld1 {
 namespace {
-
-constexpr uint32_t kPpsPeriodMs = 1000;
-constexpr uint32_t kPpsWrapThresholdMs = 500;
-constexpr uint64_t kMicrosecondsPerMillisecond = 1000;
-constexpr uint64_t kMicrosecondsPerSecond = 1000000;
-
-enum class SerialTimestampMode {
-    Unknown,
-    PpsCandidate,
-    PpsActive,
-    DeviceCounter,
-};
-
-uint64_t SystemTimeNowUs() {
-    const auto now = std::chrono::system_clock::now().time_since_epoch();
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now).count());
-}
 
 class SerialPacketSource final : public PacketSource {
 public:
@@ -47,7 +28,7 @@ public:
                     "'. Supported values: auto, none, crc8, crc8_itu, maxim, rohc.");
             return false;
         }
-        ResetTimestampState();
+        timestampNormalizer_.Reset(internal::SystemTimeNowUs());
         return serialPort_.Open(config.serial.port, config.serial.baud, error);
     }
 
@@ -77,7 +58,7 @@ public:
 
     void Close() override {
         serialPort_.Close();
-        ResetTimestampState();
+        timestampNormalizer_.Reset();
     }
 
     CameraStats Stats() const override {
@@ -126,15 +107,6 @@ private:
         return true;
     }
 
-    void ResetTimestampState() {
-        timestampMode_ = SerialTimestampMode::Unknown;
-        hasPreviousRawTimestamp_ = false;
-        previousRawTimestampMs_ = 0;
-        ppsBoundaryBaseUs_ = 0;
-        ppsWrapCount_ = 0;
-        lastPpsTimestampUs_ = 0;
-    }
-
     void SetDeviceTimestamp(internal::Measurement* measurement, uint64_t valueUs, uint32_t rawTimestampMs) {
         measurement->clock.device.valid = true;
         measurement->clock.device.value = valueUs;
@@ -149,61 +121,7 @@ private:
         }
 
         const uint32_t rawTimestampMs = measurement->clock.device.raw0;
-        const uint64_t nowUs = SystemTimeNowUs();
-
-        if (rawTimestampMs > kPpsPeriodMs) {
-            timestampMode_ = SerialTimestampMode::DeviceCounter;
-            ppsBoundaryBaseUs_ = 0;
-            ppsWrapCount_ = 0;
-            lastPpsTimestampUs_ = 0;
-            hasPreviousRawTimestamp_ = true;
-            previousRawTimestampMs_ = rawTimestampMs;
-            SetDeviceTimestamp(measurement, static_cast<uint64_t>(rawTimestampMs) * kMicrosecondsPerMillisecond, rawTimestampMs);
-            return;
-        }
-
-        const bool wrappedFromHighToLow =
-            hasPreviousRawTimestamp_ &&
-            previousRawTimestampMs_ <= kPpsPeriodMs &&
-            previousRawTimestampMs_ > rawTimestampMs &&
-            (previousRawTimestampMs_ - rawTimestampMs) > kPpsWrapThresholdMs;
-
-        if (timestampMode_ != SerialTimestampMode::PpsCandidate &&
-            timestampMode_ != SerialTimestampMode::PpsActive) {
-            ppsBoundaryBaseUs_ = nowUs - static_cast<uint64_t>(rawTimestampMs) * kMicrosecondsPerMillisecond;
-            ppsWrapCount_ = 0;
-            lastPpsTimestampUs_ = 0;
-            timestampMode_ = SerialTimestampMode::PpsCandidate;
-        }
-
-        if (wrappedFromHighToLow) {
-            ++ppsWrapCount_;
-            timestampMode_ = SerialTimestampMode::PpsActive;
-        }
-
-        const bool stalePpsSample =
-            (timestampMode_ == SerialTimestampMode::PpsCandidate || timestampMode_ == SerialTimestampMode::PpsActive) &&
-            !wrappedFromHighToLow &&
-            hasPreviousRawTimestamp_ &&
-            rawTimestampMs < previousRawTimestampMs_;
-        if (stalePpsSample && lastPpsTimestampUs_ != 0) {
-            const uint64_t staleTimestampUs = lastPpsTimestampUs_ + 1;
-            lastPpsTimestampUs_ = staleTimestampUs;
-            SetDeviceTimestamp(measurement, staleTimestampUs, rawTimestampMs);
-            return;
-        }
-
-        uint64_t realTimestampUs =
-            ppsBoundaryBaseUs_ +
-            ppsWrapCount_ * kMicrosecondsPerSecond +
-            static_cast<uint64_t>(rawTimestampMs) * kMicrosecondsPerMillisecond;
-        if (lastPpsTimestampUs_ != 0 && realTimestampUs <= lastPpsTimestampUs_) {
-            realTimestampUs = std::max(nowUs, lastPpsTimestampUs_ + 1);
-        }
-
-        hasPreviousRawTimestamp_ = true;
-        previousRawTimestampMs_ = rawTimestampMs;
-        lastPpsTimestampUs_ = realTimestampUs;
+        const uint64_t realTimestampUs = timestampNormalizer_.Normalize(rawTimestampMs, internal::SystemTimeNowUs());
         SetDeviceTimestamp(measurement, realTimestampUs, rawTimestampMs);
     }
 
@@ -212,12 +130,7 @@ private:
     std::array<uint8_t, 4096> readBuffer_ {};
     size_t parseFailureCount_ = 0;
     std::string lastError_;
-    SerialTimestampMode timestampMode_ = SerialTimestampMode::Unknown;
-    bool hasPreviousRawTimestamp_ = false;
-    uint32_t previousRawTimestampMs_ = 0;
-    uint64_t ppsBoundaryBaseUs_ = 0;
-    uint64_t ppsWrapCount_ = 0;
-    uint64_t lastPpsTimestampUs_ = 0;
+    internal::SerialTimestampNormalizer timestampNormalizer_;
 };
 
 }  // namespace

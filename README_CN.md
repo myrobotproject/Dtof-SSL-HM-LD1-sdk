@@ -11,7 +11,6 @@
 - 自动缓存设备信息和标定参数
 - 在标定可用时自动补全深度图或点云
 - 支持 CMake 安装、导出和 `find_package`
-- 自带深度抓图、点云抓图、时间戳检查、几何一致性检查工具
 
 ## 目录结构
 
@@ -19,16 +18,15 @@
 - `src/protocol/`：协议解析和载荷解码
 - `src/transport/`：串口、UDP、UVC 传输后端
 - `src/internal/`：帧组装、标定处理、几何辅助逻辑
-- `tools/`：命令行诊断和抓图工具
 - `cmake/`：CMake 包配置模板
 
 ## 平台支持
 
-| 传输方式 | Windows | Linux | 说明 |
-| --- | --- | --- | --- |
-| Serial | 支持 | 支持 | 默认波特率为 `921600` |
-| Udp | 不支持 | 支持 | 依赖 IPv4 UDP socket |
-| Uvc | 不支持 | 支持 | 依赖 V4L2，采集格式为 `YUYV` |
+| 传输方式   | Windows | Linux | 说明                   |
+| ------ | ------- | ----- | -------------------- |
+| Serial | 支持      | 支持    | 默认波特率为 `921600`      |
+| Udp    | 不支持     | 支持    | 依赖 IPv4 UDP socket   |
+| Uvc    | 不支持     | 支持    | 依赖 V4L2，采集格式为 `YUYV` |
 
 > `UdpConfig::autoConfig` 依赖原始套接字和网卡重配置能力，通常需要 `root`、`CAP_NET_RAW` 或 `CAP_NET_ADMIN`。
 
@@ -37,7 +35,7 @@
 ### 配置并编译
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHM_LD1_SDK_BUILD_TOOLS=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
@@ -52,39 +50,10 @@ cmake --install build --prefix /usr/local
 - 头文件：`include/hm_ld1_sdk/hm_ld1_sdk.hpp`
 - 动态库：`libhm_ld1_sdk.so` 或 `hm_ld1_sdk.dll`
 - CMake 包：`hm_ld1_sdkConfig.cmake`
-- 可选工具：`hm_ld1_sdk_depth_dump`、`hm_ld1_sdk_timestamp_probe`、`hm_ld1_sdk_pointcloud_probe`、`hm_ld1_sdk_pointcloud_dump`
 
 ### CMake 选项
 
 - `HM_LD1_SDK_ENABLE_WARNINGS`：开启常用编译告警
-- `HM_LD1_SDK_BUILD_TOOLS`：构建命令行工具
-
-## 自带工具
-
-当 `HM_LD1_SDK_BUILD_TOOLS=ON` 时，会生成四个小工具：
-
-- `hm_ld1_sdk_depth_dump`：通过 UVC `Depth40x30` 抓取 SDK 深度图并写成 BMP
-- `hm_ld1_sdk_timestamp_probe`：打印串口 SDK 时间戳字段，便于检查 PPS 和设备递增时间戳
-- `hm_ld1_sdk_pointcloud_probe`：检查深度、点云和标定之间的几何一致性
-- `hm_ld1_sdk_pointcloud_dump`：把设备直出点云或深度回算点云渲染成 BMP，便于直观查看
-
-示例命令：
-
-```bash
-./hm_ld1_sdk_depth_dump --uvc-device /dev/video0 --output depth_raw.bmp
-./hm_ld1_sdk_timestamp_probe --serial-port /dev/ttyUSB0 --count 50
-./hm_ld1_sdk_pointcloud_probe --uvc-device /dev/video0 --timeout-ms 5000
-./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
-  --profile pointcloud \
-  --output-raw pointcloud_raw.bmp \
-  --output-yneg pointcloud_yneg.bmp
-./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
-  --profile depth \
-  --output-raw pointcloud_from_depth_raw.bmp \
-  --output-yneg pointcloud_from_depth_yneg.bmp
-```
-
-UVC 工具主要用于 Linux/UVC 场景验证，会把 SDK 输出写成便于检查的文件；时间戳工具用于串口场景验证。
 
 ## 在其他 CMake 工程中使用
 
@@ -207,18 +176,29 @@ UVC profile 含义：
 - `confidence`：置信度图
 - `histogram`：仅原始 UVC 流可能携带
 
+### 深度采样值
+
+- SDK 不会过滤、丢弃或重映射 `FrameSet::depth.data` 中的设备深度采样值；传输帧中携带的每个采样都会输出给应用。
+- 深度值 `0`、`1`、`2` 是设备端滤波标记值，不是普通测距值。
+- `0`：飞点滤波滤除或标记的采样点。
+- `1`：连通域滤波滤除或标记的采样点。
+- `2`：探测概率滤波滤除或标记的采样点，常见原因包括目标超出量程，或深色/低反射物体导致回波信号弱。
+- 设备直出点云在 `Point3f::z` 中使用同样的标记值；`z` 为 `0`、`1`、`2` 时不是有效测距值。
+- SDK 由深度图生成点云时，会在同一网格 index 的 `Point3f::z` 中保留深度标记值 `0`、`1`、`2`，这些标记采样的 `x` 和 `y` 置为 `0`。
+- 应用可以把 `z > 2` 的点云采样视为有效测距 3D 点。
+
 ### 设备时间戳
 
-- 串口时间戳通过 `clock.device.value` 输出，单位为微秒。
-- 串口检测到有效 PPS 信号时，`clock.device.value` 会换算为基于主机系统时间的时间戳。
-- 没有有效 PPS 信号时，串口使用设备递增时间戳，并从毫秒换算为微秒输出。
-- `clock.device.raw0` 保留串口原始 `TimeStamp` 字段，便于诊断。
-- UDP 和 UVC 时间戳单位遵循对应传输协议的数据定义。
+- 所有有效的 `clock.device.value` 都统一输出为 Unix 纪元微秒，`TimestampUnit::Microseconds` 对所有传输方式一致。
+- 串口在 PPS 有效时使用 PPS 对齐后的主机时间；没有 PPS 时，以主机系统时间锚定设备递增计数。这样保持同一时间域，但无 PPS 时属于估算值，不代表设备时钟已同步。
+- UDP 只有在打开后的第一帧有效数据构成且与主机系统时间相差不超过 5 秒的 Unix 纪元时间时才直接使用该时间域；同一次打开期间不会切换时间域，后续非法或回退字段会被单调钳制。因此未同步或过期的设备时钟会使用主机锚定的相对时间估算。
+- UVC 的毫秒计数以主机时间为锚点，并处理 32 位回绕；没有设备时间戳字段的 UVC profile 使用帧接收时的主机系统时间。
+- `clock.device.raw0` 和 `clock.device.raw1` 保留协议原始字段及其原生单位，便于诊断；`hostMonotonicTimeNs` 仍是独立的主机单调时钟值。
 
 ### 自动补全逻辑
 
 - 当设备直接输出点云但没有深度图时，SDK 会根据 `z` 反推深度
-- 当设备输出深度图且标定有效时，SDK 会自动生成点云
+- 当设备输出深度图且标定有效时，SDK 会自动生成点云，并在 `Point3f::z` 中保留设备标记深度 `0`、`1`、`2`
 - `PointCloudFrame::source` 可区分点云是设备直出还是由深度推导
 
 ### 数据对齐与坐标约定

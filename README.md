@@ -1,5 +1,6 @@
 # hm_ld1_sdk
 
+[中文说明](README_CN.md)
 
 `hm_ld1_sdk` is a lightweight C++17 SDK for HM-LD1 ToF modules. It exposes one `Camera` API across serial, UDP, and UVC transports and normalizes transport-specific packets into a consistent `FrameSet`.
 
@@ -10,7 +11,6 @@
 - Automatic caching of device info and calibration
 - Automatic depth or point-cloud completion when calibration is available
 - CMake install/export support with `find_package`
-- Small diagnostic tools for depth dumps, point-cloud dumps, timestamp checks, and geometry checks
 
 ## Repository Layout
 
@@ -18,7 +18,6 @@
 - `src/protocol/`: frame parsing and payload decoding
 - `src/transport/`: serial, UDP, and UVC transport backends
 - `src/internal/`: frame assembly, calibration handling, and geometry helpers
-- `tools/`: command-line diagnostics and capture utilities
 - `cmake/`: package config template
 
 ## Platform Support
@@ -36,7 +35,7 @@
 ### Configure and build
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHM_LD1_SDK_BUILD_TOOLS=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
@@ -51,39 +50,10 @@ Installed artifacts include:
 - Header: `include/hm_ld1_sdk/hm_ld1_sdk.hpp`
 - Shared library: `libhm_ld1_sdk.so` or `hm_ld1_sdk.dll`
 - CMake package: `hm_ld1_sdkConfig.cmake`
-- Optional tools: `hm_ld1_sdk_depth_dump`, `hm_ld1_sdk_timestamp_probe`, `hm_ld1_sdk_pointcloud_probe`, `hm_ld1_sdk_pointcloud_dump`
 
 ### CMake options
 
 - `HM_LD1_SDK_ENABLE_WARNINGS`: enable common compiler warnings
-- `HM_LD1_SDK_BUILD_TOOLS`: build the command-line tools
-
-## Included Tools
-
-When `HM_LD1_SDK_BUILD_TOOLS=ON`, the project builds four small utilities:
-
-- `hm_ld1_sdk_depth_dump`: opens the sensor through UVC `Depth40x30` and writes the SDK depth frame to a BMP file
-- `hm_ld1_sdk_timestamp_probe`: prints serial SDK timestamp fields for PPS and device-counter checks
-- `hm_ld1_sdk_pointcloud_probe`: checks whether depth, point cloud, and calibration agree geometrically
-- `hm_ld1_sdk_pointcloud_dump`: renders direct or depth-derived SDK point-cloud output into BMP snapshots for visual inspection
-
-Example commands:
-
-```bash
-./hm_ld1_sdk_depth_dump --uvc-device /dev/video0 --output depth_raw.bmp
-./hm_ld1_sdk_timestamp_probe --serial-port /dev/ttyUSB0 --count 50
-./hm_ld1_sdk_pointcloud_probe --uvc-device /dev/video0 --timeout-ms 5000
-./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
-  --profile pointcloud \
-  --output-raw pointcloud_raw.bmp \
-  --output-yneg pointcloud_yneg.bmp
-./hm_ld1_sdk_pointcloud_dump --uvc-device /dev/video0 \
-  --profile depth \
-  --output-raw pointcloud_from_depth_raw.bmp \
-  --output-yneg pointcloud_from_depth_yneg.bmp
-```
-
-The UVC tools write SDK outputs in a format that is easy to inspect. The timestamp probe is intended for serial validation.
 
 ## Use From Another CMake Project
 
@@ -206,18 +176,29 @@ UVC profile meanings:
 - `confidence`: confidence map
 - `histogram`: only present for raw UVC streams
 
+### Depth sample values
+
+- The SDK does not filter, suppress, or remap device depth samples in `FrameSet::depth.data`; every sample carried by the transport frame is exposed to the application.
+- Depth values `0`, `1`, and `2` are device-side filter marker values rather than normal measured distances.
+- `0`: flying-point filter removed or marked the sample.
+- `1`: connected-component filter removed or marked the sample.
+- `2`: detection-probability filter removed or marked the sample. Common causes include out-of-range targets or weak return signals from dark/low-reflectance objects.
+- Direct point-cloud frames use the same marker values in `Point3f::z`; `z` values `0`, `1`, and `2` are marker values, not valid measured distances.
+- When the SDK derives point cloud from depth, depth marker values `0`, `1`, and `2` are preserved in `Point3f::z` at the same grid index. `x` and `y` are set to `0` for these marker samples.
+- Applications can treat point-cloud samples with `z > 2` as valid measured 3D points.
+
 ### Device timestamps
 
-- Serial timestamps are exposed in `clock.device.value` as microseconds.
-- When a valid PPS signal is detected on serial, `clock.device.value` is converted to a host-system-time based timestamp.
-- Without a valid PPS signal, serial uses the device's increasing timestamp converted from milliseconds to microseconds.
-- `clock.device.raw0` keeps the raw serial `TimeStamp` field for diagnostics.
-- UDP and UVC timestamp units follow the corresponding transport packet definitions.
+- Every valid `clock.device.value` is exposed as Unix epoch microseconds with `TimestampUnit::Microseconds`, regardless of transport.
+- Serial PPS timestamps use the PPS-derived host-time alignment. Without PPS, the increasing device counter is anchored to the host system clock; this keeps one time domain but is an estimate rather than a synchronized device clock.
+- UDP `seconds`/`nanoseconds` fields are used directly only when the first valid frame after opening forms a Unix epoch timestamp within five seconds of the host system clock. That timestamp mode remains fixed for the open session; later invalid or regressing fields are monotonically clamped. Unsynchronized or stale clocks therefore use a host-anchored relative estimate.
+- UVC millisecond counters are host-anchored and expanded across 32-bit wrap. UVC profiles without a device timestamp use the host system time when the frame is received.
+- `clock.device.raw0` and `clock.device.raw1` keep the original protocol fields in their native units for diagnostics. `hostMonotonicTimeNs` remains a separate steady-clock value.
 
 ### Automatic completion
 
 - If the device provides point cloud without depth, the SDK reconstructs depth from `z`
-- If the device provides depth and valid calibration, the SDK derives point cloud automatically
+- If the device provides depth and valid calibration, the SDK derives point cloud automatically and preserves device marker depths `0`, `1`, and `2` in `Point3f::z`
 - `PointCloudFrame::source` tells whether the point cloud is direct device output or derived from depth
 
 ### Data alignment and coordinates

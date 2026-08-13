@@ -277,7 +277,8 @@ bool BuildPointCloudFromDepth(
         for (uint32_t x = 0; x < depth.width; ++x) {
             const size_t index = static_cast<size_t>(y) * static_cast<size_t>(depth.width) + static_cast<size_t>(x);
             const float depthValue = static_cast<float>(depth.data[index]);
-            if (depthValue <= 0.0f) {
+            if (depthValue <= 2.0f) {
+                pointCloud->points[index] = Point3f {0.0f, 0.0f, depthValue};
                 continue;
             }
 
