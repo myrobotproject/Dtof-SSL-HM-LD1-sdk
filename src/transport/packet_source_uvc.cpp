@@ -11,6 +11,7 @@
 #include "internal/error_utils.hpp"
 #include "internal/timestamp_normalizer.hpp"
 #include "internal/uvc_profile_utils.hpp"
+#include "internal/uvc_timestamp.hpp"
 #include "protocol/uvc_protocol.hpp"
 #include "transport/uvc_device.hpp"
 
@@ -25,7 +26,7 @@ public:
     bool Open(const CameraConfig& config, std::string* error) override {
         internal::ClearError(error);
         config_ = config;
-        timestampNormalizer_.Reset(internal::SystemTimeNowUs());
+        timestampNormalizer_.Reset();
         lastTimestampUs_ = 0;
         resolvedProfile_ = internal::ResolveUvcProfile(config_.uvc.workingProfile);
         if (!internal::GetUvcStreamDimensions(resolvedProfile_, &streamWidth_, &streamHeight_)) {
@@ -49,6 +50,7 @@ public:
         if (frameBuffer_.empty()) {
             return true;
         }
+        const uint64_t hostObservationUs = internal::SystemTimeNowUs();
 
         UvcParsedFrame parsedFrame;
         std::string parseError;
@@ -60,7 +62,7 @@ public:
 
         ++okPacketCount_;
         lastError_.clear();
-        return HandleParsedFrame(std::move(parsedFrame), event);
+        return HandleParsedFrame(std::move(parsedFrame), hostObservationUs, event);
     }
 
     void Close() override {
@@ -88,16 +90,20 @@ public:
     }
 
 private:
-    bool HandleParsedFrame(UvcParsedFrame parsedFrame, internal::SourceEvent* event) {
+    bool HandleParsedFrame(
+        UvcParsedFrame parsedFrame,
+        uint64_t hostObservationUs,
+        internal::SourceEvent* event) {
         if (resolvedProfile_ != UvcStreamProfile::Mixed120x90 || parsedFrame.type == UvcParsedFrameType::Info) {
             if (parsedFrame.type == UvcParsedFrameType::Depth || parsedFrame.type == UvcParsedFrameType::PointCloud) {
-                NormalizeTimestamp(&parsedFrame.event.measurement);
+                NormalizeTimestamp(&parsedFrame.event.measurement, hostObservationUs);
             }
             *event = std::move(parsedFrame.event);
             return true;
         }
 
         if (parsedFrame.type == UvcParsedFrameType::PointCloud) {
+            NormalizeTimestamp(&parsedFrame.event.measurement, hostObservationUs);
             if (pendingPointCloud_.has_value()) {
                 readyEvents_.push_back(std::move(*pendingPointCloud_));
                 pendingPointCloud_.reset();
@@ -113,9 +119,6 @@ private:
             internal::SourceEvent combined = std::move(*pendingPointCloud_);
             pendingPointCloud_.reset();
             internal::MergeDeviceInfo(parsedFrame.event.infoUpdate, &combined.infoUpdate);
-            if (parsedFrame.event.measurement.clock.device.valid) {
-                combined.measurement.clock.device = parsedFrame.event.measurement.clock.device;
-            }
             if (parsedFrame.event.measurement.calibration.has_value()) {
                 combined.measurement.calibration = parsedFrame.event.measurement.calibration;
             }
@@ -123,46 +126,28 @@ private:
             combined.measurement.confidence = std::move(parsedFrame.event.measurement.confidence);
             combined.measurement.histogram = std::move(parsedFrame.event.measurement.histogram);
             combined.measurement.activeUvcProfile = UvcStreamProfile::Mixed120x90;
-            NormalizeTimestamp(&combined.measurement);
             *event = std::move(combined);
             return true;
         }
 
         if (parsedFrame.type == UvcParsedFrameType::Depth || parsedFrame.type == UvcParsedFrameType::PointCloud) {
-            NormalizeTimestamp(&parsedFrame.event.measurement);
+            NormalizeTimestamp(&parsedFrame.event.measurement, hostObservationUs);
         }
         *event = std::move(parsedFrame.event);
         return true;
     }
 
     void PopReadyEvent(internal::SourceEvent* event) {
-        NormalizeTimestamp(&readyEvents_.front().measurement);
         *event = std::move(readyEvents_.front());
         readyEvents_.pop_front();
     }
 
-    void NormalizeTimestamp(internal::Measurement* measurement) {
-        if (measurement == nullptr) {
-            return;
-        }
-
-        uint64_t valueUs = internal::SystemTimeNowUs();
-        if (measurement->clock.device.valid) {
-            const uint32_t rawTimestampMs = measurement->clock.device.raw0;
-            valueUs = timestampNormalizer_.Normalize(rawTimestampMs, internal::SystemTimeNowUs());
-            measurement->clock.device.unit = TimestampUnit::Microseconds;
-        } else {
-            measurement->clock.device.valid = true;
-            measurement->clock.device.raw0 = 0;
-            measurement->clock.device.raw1 = 0;
-        }
-
-        if (lastTimestampUs_ != 0 && valueUs <= lastTimestampUs_) {
-            valueUs = lastTimestampUs_ + 1ull;
-        }
-        lastTimestampUs_ = valueUs;
-        measurement->clock.device.value = valueUs;
-        measurement->clock.device.unit = TimestampUnit::Microseconds;
+    void NormalizeTimestamp(internal::Measurement* measurement, uint64_t hostObservationUs) {
+        internal::NormalizeUvcTimestamp(
+            measurement,
+            &timestampNormalizer_,
+            hostObservationUs,
+            &lastTimestampUs_);
     }
 
     CameraConfig config_;

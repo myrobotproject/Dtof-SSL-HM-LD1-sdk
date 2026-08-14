@@ -69,7 +69,7 @@ class UdpPacketSource final : public PacketSource {
 public:
     bool Open(const CameraConfig& config, std::string* error) override {
         internal::ClearError(error);
-        relativeTimestampNormalizer_.Reset(internal::SystemTimeNowUs());
+        relativeTimestampNormalizer_.Reset();
         lastTimestampUs_ = 0;
         timestampMode_ = UdpTimestampMode::Unknown;
         if (!config.udp.interfaceName.empty() &&

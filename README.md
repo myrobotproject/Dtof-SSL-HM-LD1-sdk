@@ -190,7 +190,7 @@ UVC profile meanings:
 ### Device timestamps
 
 - Every valid `clock.device.value` is exposed as Unix epoch microseconds with `TimestampUnit::Microseconds`, regardless of transport.
-- Serial PPS timestamps use the PPS-derived host-time alignment. Without PPS, the increasing device counter is anchored to the host system clock; this keeps one time domain but is an estimate rather than a synchronized device clock.
+- Serial timestamps, including streams with periodic PPS rollover, are anchored to the host receive time of the first valid frame and advanced by device millisecond deltas. They share the Unix epoch domain, but the SDK does not currently guarantee that a PPS edge is aligned to a host Unix-second boundary or remove transport and scheduling latency. Without PPS, the increasing device counter is likewise a host-clock estimate rather than a synchronized device clock.
 - UDP `seconds`/`nanoseconds` fields are used directly only when the first valid frame after opening forms a Unix epoch timestamp within five seconds of the host system clock. That timestamp mode remains fixed for the open session; later invalid or regressing fields are monotonically clamped. Unsynchronized or stale clocks therefore use a host-anchored relative estimate.
 - UVC millisecond counters are host-anchored and expanded across 32-bit wrap. UVC profiles without a device timestamp use the host system time when the frame is received.
 - `clock.device.raw0` and `clock.device.raw1` keep the original protocol fields in their native units for diagnostics. `hostMonotonicTimeNs` remains a separate steady-clock value.

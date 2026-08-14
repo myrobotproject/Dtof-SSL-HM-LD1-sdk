@@ -39,7 +39,7 @@ RelativeMillisecondNormalizer::RelativeMillisecondNormalizer(uint64_t hostAnchor
 }
 
 void RelativeMillisecondNormalizer::Reset(uint64_t hostAnchorUs) {
-    hostAnchorUs_ = ResolveAnchor(hostAnchorUs);
+    hostAnchorUs_ = hostAnchorUs;
     restartAnchorUs_ = hostAnchorUs_;
     initialized_ = false;
     previousRawMilliseconds_ = 0;
@@ -59,6 +59,10 @@ uint64_t RelativeMillisecondNormalizer::Normalize(uint32_t rawMilliseconds, uint
         initialized_ = true;
         previousRawMilliseconds_ = rawMilliseconds;
         logicalMilliseconds_ = 0;
+        if (hostAnchorUs_ == 0) {
+            hostAnchorUs_ = observationUs;
+            restartAnchorUs_ = observationUs;
+        }
         lastOutputUs_ = hostAnchorUs_;
         lastHostObservationUs_ = observationUs;
         hasHostObservation_ = true;
@@ -99,8 +103,6 @@ uint64_t RelativeMillisecondNormalizer::Normalize(uint32_t rawMilliseconds, uint
         } else if (backward <= kPpsWrapThresholdMilliseconds) {
             // A small backwards step is normally a reordered or duplicated frame.
             // Keep the raw predecessor so a later forward sample resumes normally.
-            lastHostObservationUs_ = observationUs;
-            hasHostObservation_ = true;
             return ++lastOutputUs_;
         } else {
             restartAnchorUs_ = observationUs > lastOutputUs_ ? observationUs : lastOutputUs_ + 1ull;
@@ -123,12 +125,16 @@ uint64_t RelativeMillisecondNormalizer::Normalize(uint32_t rawMilliseconds, uint
     return lastOutputUs_;
 }
 
+uint32_t RelativeMillisecondNormalizer::LastAcceptedRawMilliseconds() const {
+    return previousRawMilliseconds_;
+}
+
 RelativeSecondNormalizer::RelativeSecondNormalizer(uint64_t hostAnchorUs) {
     Reset(hostAnchorUs);
 }
 
 void RelativeSecondNormalizer::Reset(uint64_t hostAnchorUs) {
-    hostAnchorUs_ = ResolveAnchor(hostAnchorUs);
+    hostAnchorUs_ = hostAnchorUs;
     restartAnchorUs_ = hostAnchorUs_;
     initialized_ = false;
     previousRawSeconds_ = 0;
@@ -153,6 +159,10 @@ uint64_t RelativeSecondNormalizer::Normalize(
         previousRawSeconds_ = rawSeconds;
         previousRawNanoseconds_ = rawNanoseconds;
         logicalMicroseconds_ = 0;
+        if (hostAnchorUs_ == 0) {
+            hostAnchorUs_ = observationUs;
+            restartAnchorUs_ = observationUs;
+        }
         lastOutputUs_ = hostAnchorUs_;
         lastHostObservationUs_ = observationUs;
         hasHostObservation_ = true;
@@ -175,8 +185,6 @@ uint64_t RelativeSecondNormalizer::Normalize(
         } else if (backward <= 1u) {
             // A one-second backwards step can be packet reordering; do not
             // move the host anchor until the stream shows a larger reset.
-            lastHostObservationUs_ = observationUs;
-            hasHostObservation_ = true;
             return ++lastOutputUs_;
         } else {
             restartAnchorUs_ = observationUs;
@@ -199,8 +207,6 @@ uint64_t RelativeSecondNormalizer::Normalize(
     const int64_t deltaMicroseconds =
         static_cast<int64_t>(deltaSeconds * kMicrosecondsPerSecond) + nanosecondDelta / 1000ll;
     if (deltaMicroseconds < 0) {
-        lastHostObservationUs_ = observationUs;
-        hasHostObservation_ = true;
         return ++lastOutputUs_;
     }
 
@@ -237,7 +243,13 @@ void SerialTimestampNormalizer::Reset(uint64_t hostAnchorUs) {
 }
 
 uint64_t SerialTimestampNormalizer::Normalize(uint32_t rawMilliseconds, uint64_t hostNowUs) {
-    if (initialized_) {
+    bool smallBackwardReorder = false;
+    if (initialized_ && rawMilliseconds < previousRawMilliseconds_) {
+        const uint32_t backward = previousRawMilliseconds_ - rawMilliseconds;
+        smallBackwardReorder = backward <= kPpsWrapThresholdMilliseconds;
+    }
+
+    if (initialized_ && !smallBackwardReorder) {
         const bool ppsToCounter = previousRawMilliseconds_ <= kPpsPeriodMilliseconds &&
             rawMilliseconds > 1500u;
         const bool is32BitWrap = previousRawMilliseconds_ >= 0xfffff000u &&
@@ -255,7 +267,7 @@ uint64_t SerialTimestampNormalizer::Normalize(uint32_t rawMilliseconds, uint64_t
         valueUs = lastOutputUs_ + 1ull;
     }
     initialized_ = true;
-    previousRawMilliseconds_ = rawMilliseconds;
+    previousRawMilliseconds_ = relativeNormalizer_.LastAcceptedRawMilliseconds();
     lastOutputUs_ = valueUs;
     return valueUs;
 }

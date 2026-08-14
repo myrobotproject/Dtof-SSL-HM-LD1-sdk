@@ -28,7 +28,7 @@ public:
                     "'. Supported values: auto, none, crc8, crc8_itu, maxim, rohc.");
             return false;
         }
-        timestampNormalizer_.Reset(internal::SystemTimeNowUs());
+        timestampNormalizer_.Reset();
         return serialPort_.Open(config.serial.port, config.serial.baud, error);
     }
 

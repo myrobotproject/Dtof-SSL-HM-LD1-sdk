@@ -14,6 +14,7 @@ public:
     void Reset(uint64_t hostAnchorUs = 0);
     uint64_t Normalize(uint32_t rawMilliseconds);
     uint64_t Normalize(uint32_t rawMilliseconds, uint64_t hostNowUs);
+    uint32_t LastAcceptedRawMilliseconds() const;
 
 private:
     uint64_t hostAnchorUs_ = 0;

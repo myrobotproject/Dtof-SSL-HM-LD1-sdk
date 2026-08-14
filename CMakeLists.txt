@@ -17,6 +17,7 @@ add_library(hm_ld1_sdk SHARED
     src/camera.cpp
     src/internal/frame_event.cpp
     src/internal/timestamp_normalizer.cpp
+    src/internal/uvc_timestamp.cpp
     src/protocol/frame_parser.cpp
     src/protocol/serial_protocol.cpp
     src/protocol/udp_protocol.cpp
