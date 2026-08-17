@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <hm_ld1_sdk/hm_ld1_sdk_export.hpp>
+
 namespace hm_ld1 {
 
 constexpr uint32_t kDepthWidth = 40;
@@ -213,7 +215,7 @@ struct CameraStats {
     std::string lastError;
 };
 
-class Camera {
+class HM_LD1_SDK_EXPORT Camera {
 public:
     Camera();
     ~Camera();

@@ -1,9 +1,15 @@
 ﻿cmake_minimum_required(VERSION 3.16)
 
-project(hm_ld1_sdk VERSION 1.0.0 LANGUAGES CXX)
+set(HM_LD1_SDK_VERSION "1.0.0" CACHE STRING "hm_ld1_sdk numeric semantic version")
+if(NOT HM_LD1_SDK_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "HM_LD1_SDK_VERSION must use MAJOR.MINOR.PATCH format")
+endif()
+
+project(hm_ld1_sdk VERSION ${HM_LD1_SDK_VERSION} LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(GenerateExportHeader)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(HM_LD1_SDK_TOP_LEVEL_DEFAULT ON)
@@ -34,6 +40,12 @@ add_library(hm_ld1_sdk SHARED
     src/transport/uvc_device.cpp
 )
 
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/hm_ld1_sdk")
+generate_export_header(hm_ld1_sdk
+    BASE_NAME HM_LD1_SDK
+    EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/generated/hm_ld1_sdk/hm_ld1_sdk_export.hpp"
+)
+
 add_library(hm_ld1::sdk ALIAS hm_ld1_sdk)
 
 target_compile_features(hm_ld1_sdk PUBLIC cxx_std_17)
@@ -44,7 +56,7 @@ set_target_properties(hm_ld1_sdk PROPERTIES
 
 set_target_properties(hm_ld1_sdk PROPERTIES
     VERSION ${PROJECT_VERSION}
-    SOVERSION 1
+    SOVERSION ${PROJECT_VERSION_MAJOR}
     OUTPUT_NAME hm_ld1_sdk
     EXPORT_NAME sdk
     POSITION_INDEPENDENT_CODE ON
@@ -53,6 +65,7 @@ set_target_properties(hm_ld1_sdk PROPERTIES
 target_include_directories(hm_ld1_sdk
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -77,7 +90,9 @@ install(TARGETS hm_ld1_sdk
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(FILES include/hm_ld1_sdk/hm_ld1_sdk.hpp
+install(FILES
+    include/hm_ld1_sdk/hm_ld1_sdk.hpp
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/hm_ld1_sdk/hm_ld1_sdk_export.hpp"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hm_ld1_sdk
 )
 
