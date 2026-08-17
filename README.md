@@ -30,6 +30,31 @@
 
 > `UdpConfig::autoConfig` uses raw sockets and interface reconfiguration. It usually requires `root`, `CAP_NET_RAW`, or `CAP_NET_ADMIN`.
 
+## Prebuilt Packages
+
+Versioned releases provide ready-to-use packages for Linux x86_64, Linux ARM64,
+and Windows x64. Download the package for your platform from the
+[Releases](https://github.com/myrobotproject/Dtof-SSL-HM-LD1-sdk/releases) page
+and extract it to a location of your choice.
+
+Point CMake at the extracted package directory:
+
+```bash
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hm_ld1_sdk-v1.2.3
+```
+
+On Linux, add the package `lib` directory to the runtime loader path if the
+library is not installed in a system location:
+
+```bash
+export LD_LIBRARY_PATH=/path/to/hm_ld1_sdk-v1.2.3/lib:$LD_LIBRARY_PATH
+```
+
+On Windows, add the package `bin` directory to `PATH` before running the
+application. The matching Microsoft Visual C++ runtime must also be installed.
+
+Release checksums are listed in `SHA256SUMS.txt`.
+
 ## Build
 
 ### Configure and build

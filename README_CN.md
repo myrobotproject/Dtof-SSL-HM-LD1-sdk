@@ -30,6 +30,29 @@
 
 > `UdpConfig::autoConfig` 依赖原始套接字和网卡重配置能力，通常需要 `root`、`CAP_NET_RAW` 或 `CAP_NET_ADMIN`。
 
+## 预编译包
+
+每个正式版本提供 Linux x86_64、Linux ARM64 和 Windows x64 预编译包。
+从 [Releases](https://github.com/myrobotproject/Dtof-SSL-HM-LD1-sdk/releases)
+页面下载对应平台的压缩包，并解压到任意目录。
+
+通过解压目录设置 CMake 包搜索路径：
+
+```bash
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hm_ld1_sdk-v1.2.3
+```
+
+Linux 未将库安装到系统目录时，需要把包内 `lib` 目录加入运行时搜索路径：
+
+```bash
+export LD_LIBRARY_PATH=/path/to/hm_ld1_sdk-v1.2.3/lib:$LD_LIBRARY_PATH
+```
+
+Windows 运行程序前，需要把包内 `bin` 目录加入 `PATH`，并安装匹配的
+Microsoft Visual C++ 运行库。
+
+发布包的 SHA-256 校验值记录在 `SHA256SUMS.txt` 中。
+
 ## 构建
 
 ### 配置并编译
