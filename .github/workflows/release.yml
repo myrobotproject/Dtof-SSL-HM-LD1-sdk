@@ -1,0 +1,302 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      cmake_version: ${{ steps.version.outputs.cmake_version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Validate release tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|beta)\.(0|[1-9][0-9]*))?$'
+          if [[ ! "${tag}" =~ ${pattern} ]]; then
+            echo "Unsupported release tag: ${tag}" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "cmake_version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}" >> "${GITHUB_OUTPUT}"
+          if [[ -n "${BASH_REMATCH[4]}" ]]; then
+            echo "prerelease=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "prerelease=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  build-linux:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x86_64
+            file_pattern: x86-64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            file_pattern: ARM aarch64
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:20.04
+    steps:
+      - name: Install build tools
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+            ca-certificates cmake file g++ git ninja-build tar
+
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Build and install
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          prefix="${GITHUB_WORKSPACE}/stage/hm_ld1_sdk-${tag}"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHM_LD1_SDK_VERSION="${{ needs.prepare.outputs.cmake_version }}"
+          cmake --build build
+          cmake --install build --prefix "${prefix}"
+
+      - name: Validate installed package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          prefix="${GITHUB_WORKSPACE}/stage/hm_ld1_sdk-${tag}"
+          test -f "${prefix}/include/hm_ld1_sdk/hm_ld1_sdk.hpp"
+          test -f "${prefix}/include/hm_ld1_sdk/hm_ld1_sdk_export.hpp"
+          test -f "${prefix}/lib/cmake/hm_ld1_sdk/hm_ld1_sdkConfig.cmake"
+          library="$(find "${prefix}/lib" -maxdepth 1 -type f -name 'libhm_ld1_sdk.so.*' | head -n 1)"
+          test -n "${library}"
+          file "${library}" | grep -q "${{ matrix.file_pattern }}"
+          cmake -S tests/package_consumer -B consumer-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${prefix}"
+          cmake --build consumer-build
+          LD_LIBRARY_PATH="${prefix}/lib" ./consumer-build/hm_ld1_sdk_package_consumer
+
+      - name: Package and recheck archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          package_dir="hm_ld1_sdk-${tag}"
+          archive="hm_ld1_sdk-${tag}-linux-${{ matrix.architecture }}.tar.gz"
+          tar -C "${GITHUB_WORKSPACE}/stage" -czf "${archive}" "${package_dir}"
+          mkdir verify-archive
+          tar -C verify-archive -xzf "${archive}"
+          test -f "verify-archive/${package_dir}/include/hm_ld1_sdk/hm_ld1_sdk.hpp"
+          test -f "verify-archive/${package_dir}/lib/cmake/hm_ld1_sdk/hm_ld1_sdkConfig.cmake"
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-linux-${{ matrix.architecture }}
+          path: hm_ld1_sdk-${{ needs.prepare.outputs.tag }}-linux-${{ matrix.architecture }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows:
+    needs: prepare
+    runs-on: windows-2022
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Build and install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $tag = '${{ needs.prepare.outputs.tag }}'
+          $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\hm_ld1_sdk-$tag"
+          cmake -S . -B build -A x64 `
+            -DHM_LD1_SDK_VERSION='${{ needs.prepare.outputs.cmake_version }}'
+          cmake --build build --config Release
+          cmake --install build --config Release --prefix $prefix
+
+      - name: Validate installed package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $tag = '${{ needs.prepare.outputs.tag }}'
+          $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\hm_ld1_sdk-$tag"
+          $required = @(
+            "$prefix\include\hm_ld1_sdk\hm_ld1_sdk.hpp",
+            "$prefix\include\hm_ld1_sdk\hm_ld1_sdk_export.hpp",
+            "$prefix\bin\hm_ld1_sdk.dll",
+            "$prefix\lib\hm_ld1_sdk.lib",
+            "$prefix\lib\cmake\hm_ld1_sdk\hm_ld1_sdkConfig.cmake"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Missing installed file: $path"
+            }
+          }
+          $dllBytes = [System.IO.File]::ReadAllBytes("$prefix\bin\hm_ld1_sdk.dll")
+          $peOffset = [BitConverter]::ToInt32($dllBytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($dllBytes, $peOffset + 4)
+          if ($machine -ne 0x8664) {
+            throw ('Expected x64 DLL, machine value was 0x{0:X4}' -f $machine)
+          }
+          cmake -S tests/package_consumer -B consumer-build -A x64 `
+            -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build consumer-build --config Release
+          $env:PATH = "$prefix\bin;$env:PATH"
+          & .\consumer-build\Release\hm_ld1_sdk_package_consumer.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Consumer smoke test failed with $LASTEXITCODE"
+          }
+
+      - name: Package and recheck archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $tag = '${{ needs.prepare.outputs.tag }}'
+          $packageDir = "hm_ld1_sdk-$tag"
+          $packagePath = Join-Path $env:GITHUB_WORKSPACE "stage\$packageDir"
+          $archive = "hm_ld1_sdk-$tag-windows-x64.zip"
+          Compress-Archive -LiteralPath $packagePath -DestinationPath $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath verify-archive
+          $config = "verify-archive\$packageDir\lib\cmake\hm_ld1_sdk\hm_ld1_sdkConfig.cmake"
+          if (-not (Test-Path -LiteralPath $config)) {
+            throw "Archive is missing $config"
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-windows-x64
+          path: hm_ld1_sdk-${{ needs.prepare.outputs.tag }}-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs:
+      - prepare
+      - build-linux
+      - build-windows
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out release configuration
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate and verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum hm_ld1_sdk-*.tar.gz hm_ld1_sdk-*.zip > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+
+      - name: Generate release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          generated_notes="$(gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${tag}" \
+            -f target_commitish="${GITHUB_SHA}" \
+            --jq '.body')"
+          {
+            printf 'Prebuilt C++17 SDK packages for Linux and Windows.\n\n'
+            printf '## Downloads\n\n'
+            printf '| Platform | Architecture | Package |\n'
+            printf '| --- | --- | --- |\n'
+            printf "| Linux | x86_64 | \`hm_ld1_sdk-%s-linux-x86_64.tar.gz\` |\n" "${tag}"
+            printf "| Linux | ARM64 | \`hm_ld1_sdk-%s-linux-arm64.tar.gz\` |\n" "${tag}"
+            printf "| Windows | x64 | \`hm_ld1_sdk-%s-windows-x64.zip\` |\n\n" "${tag}"
+            printf '## Quick Start\n\n'
+            printf "Extract the package and add its top-level directory to \`CMAKE_PREFIX_PATH\`. "
+            printf "On Windows, also add the package \`bin\` directory to \`PATH\` at runtime.\n\n"
+            printf '## Compatibility\n\n'
+            printf -- '- Linux: glibc 2.31 or newer\n'
+            printf -- '- Windows: x64 with the Microsoft Visual C++ runtime\n'
+            printf -- '- C++ standard: C++17\n\n'
+            printf '%s\n' "${generated_notes}"
+          } > release-notes.md
+
+      - name: Create draft and upload assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          title="Release ${tag}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            is_draft="$(gh release view "${tag}" --json isDraft --jq '.isDraft')"
+            if [[ "${is_draft}" != "true" ]]; then
+              echo "Release ${tag} is already published; refusing to replace it." >&2
+              exit 1
+            fi
+            gh release edit "${tag}" --draft --title "${title}" --notes-file release-notes.md
+          else
+            gh release create "${tag}" --verify-tag --draft --title "${title}" --notes-file release-notes.md
+          fi
+          gh release upload "${tag}" dist/* --clobber
+
+      - name: Verify draft assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          expected_assets="$(
+            printf '%s\n' \
+              "SHA256SUMS.txt" \
+              "hm_ld1_sdk-${tag}-linux-arm64.tar.gz" \
+              "hm_ld1_sdk-${tag}-linux-x86_64.tar.gz" \
+              "hm_ld1_sdk-${tag}-windows-x64.zip" | sort
+          )"
+          actual_assets="$(
+            gh release view "${tag}" --json assets --jq '.assets[].name' | sort
+          )"
+          if [[ "${actual_assets}" != "${expected_assets}" ]]; then
+            echo "Draft assets do not match the expected release package set." >&2
+            diff -u \
+              <(printf '%s\n' "${expected_assets}") \
+              <(printf '%s\n' "${actual_assets}") || true
+            exit 1
+          fi
+
+      - name: Publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          if [[ '${{ needs.prepare.outputs.prerelease }}' == 'true' ]]; then
+            gh release edit "${tag}" --draft=false --prerelease
+          else
+            gh release edit "${tag}" --draft=false --prerelease=false
+          fi
