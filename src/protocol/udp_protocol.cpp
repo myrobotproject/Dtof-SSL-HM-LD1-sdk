@@ -6,13 +6,25 @@
 
 namespace hm_ld1 {
 
-bool ParseUdpDataFrame(const uint8_t* payload, size_t payloadSize, internal::Measurement* measurement, std::string* error) {
-    constexpr size_t kUdpHeaderSize = 2 + 2 + 4 + 2 + 4 + 4 + 2 + 2 + 2 + 1 + (kCalibrationParameterCount * 4);
+bool ParseUdpDataFrame(
+    const uint8_t* payload,
+    size_t payloadSize,
+    internal::Measurement* measurement,
+    DeviceInfo* info,
+    std::string* error) {
+    constexpr size_t kUdpReservedPrefixSize = 2;
+    constexpr size_t kUdpHeaderSize =
+        kUdpReservedPrefixSize + 2 + 4 + 2 + 4 + 4 + 2 + 2 + 2 + 1 +
+        (kCalibrationParameterCount * 4);
     constexpr size_t kUdpPixelStride = 4;
     constexpr size_t kUdpPayloadSize = kUdpHeaderSize + (kDepthPointCount * kUdpPixelStride);
 
     if (measurement == nullptr) {
         internal::SetError(error, "UDP measurement output pointer is null");
+        return false;
+    }
+    if (info == nullptr) {
+        internal::SetError(error, "UDP device-info output pointer is null");
         return false;
     }
     internal::ClearError(error);
@@ -26,11 +38,13 @@ bool ParseUdpDataFrame(const uint8_t* payload, size_t payloadSize, internal::Mea
     }
 
     *measurement = internal::Measurement();
+    *info = DeviceInfo();
     measurement->transportType = TransportType::Udp;
 
     size_t offset = 0;
-    const uint16_t checkSum = protocol_detail::ReadLe16(payload + offset);
-    offset += 2;
+    // Bytes 0-1 are reserved as zero in the current 4873-byte payload protocol.
+    // A standard UDP-header checksum, when present, is handled by the network stack.
+    offset += kUdpReservedPrefixSize;
     const uint16_t seqNum = protocol_detail::ReadLe16(payload + offset);
     offset += 2;
     const uint32_t startPixel = protocol_detail::ReadLe32(payload + offset);
@@ -53,10 +67,8 @@ bool ParseUdpDataFrame(const uint8_t* payload, size_t payloadSize, internal::Mea
     offset += 2;
     const uint8_t protocolVersion = payload[offset++];
 
-    (void)checkSum;
     (void)seqNum;
     (void)frameRate;
-    (void)protocolVersion;
 
     if (startPixel != 0) {
         internal::SetError(error, "UDP partial frames are not supported");
@@ -100,11 +112,16 @@ bool ParseUdpDataFrame(const uint8_t* payload, size_t payloadSize, internal::Mea
     measurement->clock.device.unit = TimestampUnit::Microseconds;
     measurement->clock.device.raw0 = timestampSeconds;
     measurement->clock.device.raw1 = timestampNanoseconds;
+    info->protocolVersion = protocolVersion;
     return true;
 }
 
-bool ParseUdpDataFrame(const std::vector<uint8_t>& payload, internal::Measurement* measurement, std::string* error) {
-    return ParseUdpDataFrame(payload.data(), payload.size(), measurement, error);
+bool ParseUdpDataFrame(
+    const std::vector<uint8_t>& payload,
+    internal::Measurement* measurement,
+    DeviceInfo* info,
+    std::string* error) {
+    return ParseUdpDataFrame(payload.data(), payload.size(), measurement, info, error);
 }
 
 }  // namespace hm_ld1

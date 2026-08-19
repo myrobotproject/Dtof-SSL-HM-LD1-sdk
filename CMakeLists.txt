@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.16)
 
-set(HM_LD1_SDK_VERSION "1.0.0" CACHE STRING "hm_ld1_sdk numeric semantic version")
+set(HM_LD1_SDK_VERSION "1.0.1" CACHE STRING "hm_ld1_sdk numeric semantic version")
 if(NOT HM_LD1_SDK_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
     message(FATAL_ERROR "HM_LD1_SDK_VERSION must use MAJOR.MINOR.PATCH format")
 endif()

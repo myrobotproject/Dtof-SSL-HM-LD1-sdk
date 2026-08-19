@@ -30,6 +30,7 @@ StreamCapabilities BuildCapabilities(const CameraConfig& config, bool hasBootstr
     }
 
     if (config.transportType == TransportType::Udp) {
+        capabilities.mayProvideDeviceInfo = true;
         capabilities.mayProvideConfidence = true;
         capabilities.mayProvideDeviceTimestamp = true;
         return capabilities;

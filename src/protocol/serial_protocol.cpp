@@ -28,17 +28,21 @@ bool ParseSerialInfoPacket(const std::vector<uint8_t>& payload, DeviceInfo* info
     return true;
 }
 
-bool ParseSerialDataFrame(const std::vector<uint8_t>& payload, internal::Measurement* measurement) {
+bool ParseSerialDataFrame(
+    const std::vector<uint8_t>& payload,
+    internal::Measurement* measurement,
+    DeviceInfo* info) {
     constexpr size_t kMinimumPayloadSize = 1 + 4 + (kCalibrationParameterCount * 4) + (kDepthPointCount * 2);
-    if (measurement == nullptr || payload.size() < kMinimumPayloadSize) {
+    if (measurement == nullptr || info == nullptr || payload.size() < kMinimumPayloadSize) {
         return false;
     }
 
     *measurement = internal::Measurement();
+    *info = DeviceInfo();
     measurement->transportType = TransportType::Serial;
 
     size_t offset = 0;
-    const uint8_t protocolVersion = payload[offset++];
+    info->protocolVersion = payload[offset++];
     const uint32_t rawTimestamp = protocol_detail::ReadLe32(payload.data() + offset);
     offset += 4;
 
@@ -63,7 +67,6 @@ bool ParseSerialDataFrame(const std::vector<uint8_t>& payload, internal::Measure
     measurement->clock.device.raw0 = rawTimestamp;
     measurement->clock.device.raw1 = 0;
 
-    (void)protocolVersion;
     return true;
 }
 

@@ -92,7 +92,12 @@ public:
         }
 
         std::string parseError;
-        if (!ParseUdpDataFrame(readBuffer_.data(), static_cast<size_t>(bytesRead), &event->measurement, &parseError)) {
+        if (!ParseUdpDataFrame(
+                readBuffer_.data(),
+                static_cast<size_t>(bytesRead),
+                &event->measurement,
+                &event->infoUpdate,
+                &parseError)) {
             ++parseFailureCount_;
             lastError_ = std::move(parseError);
             event->type = internal::SourceEventType::None;

@@ -93,7 +93,7 @@ private:
             return true;
         }
         if (frame.msgId == kDataMsgId) {
-            if (!ParseSerialDataFrame(frame.msgData, &event->measurement)) {
+            if (!ParseSerialDataFrame(frame.msgData, &event->measurement, &event->infoUpdate)) {
                 ++parseFailureCount_;
                 lastError_ = "Failed to parse serial data packet";
                 event->type = internal::SourceEventType::None;

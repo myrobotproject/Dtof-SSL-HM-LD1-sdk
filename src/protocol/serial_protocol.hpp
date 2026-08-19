@@ -11,7 +11,10 @@ constexpr uint8_t kInfoMsgId = 0x21;
 constexpr uint8_t kDataMsgId = 0x22;
 
 bool ParseSerialInfoPacket(const std::vector<uint8_t>& payload, DeviceInfo* info);
-bool ParseSerialDataFrame(const std::vector<uint8_t>& payload, internal::Measurement* measurement);
+bool ParseSerialDataFrame(
+    const std::vector<uint8_t>& payload,
+    internal::Measurement* measurement,
+    DeviceInfo* info);
 
 }  // namespace hm_ld1
 
